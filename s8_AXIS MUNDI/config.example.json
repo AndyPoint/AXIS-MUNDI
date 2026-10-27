@@ -1,0 +1,73 @@
+{
+  "port": 8808,
+  "host": "127.0.0.1",
+  "machine": "mac",
+
+  "vault": { "path": "~/Obsidian/Second brain", "name": "Second brain" },
+
+  "sectors": [
+    { "id": "brain",        "name": "Second brain" },
+    { "id": "ideas",        "name": "Ideas · theory · books" },
+    { "id": "architecture", "name": "Architecture" },
+    { "id": "art",          "name": "Art" },
+    { "id": "video",        "name": "Video" },
+    { "id": "image",        "name": "Image" },
+    { "id": "generation",   "name": "AI generation" }
+  ],
+
+  "roots": [
+    { "path": "~/Obsidian/Second brain",  "sector": "brain" },
+    { "path": "~/.claude/skills",         "sector": "brain", "name": "Skills" },
+    { "path": "~/Documents/Books",        "sector": "ideas" },
+    { "path": "~/Work/Architecture",      "sector": "architecture" },
+    { "path": "~/Work/Art",               "sector": "art" },
+    { "path": "~/Movies",                 "sector": "video" },
+    { "path": "~/Pictures/Photos",        "sector": "image", "workDepth": 1 },
+    { "path": "~/Pictures/Midjourney",    "sector": "generation" },
+    { "path": "~/ComfyUI/output",         "sector": "generation", "name": "ComfyUI" },
+    { "path": "~/Desktop",                "sector": "auto", "workDepth": 0 }
+  ],
+
+  "ignore": ["Library", "Applications", "Photos Library.photoslibrary", "cache", "tmp"],
+  "readPrompts": true,
+
+  "toolsDir": "",
+  "allowOrigins": [],
+
+  "tools": [
+    { "id": "mirror",    "name": "MIRROR",      "group": "system8", "url": "", "pass": "src", "exts": ["png","jpg","jpeg","webp","mp4","mov"], "sector": "art" },
+    { "id": "sc3ne",     "name": "SC3NE",       "group": "system8", "url": "", "pass": "src", "exts": ["png","jpg","jpeg","webp"], "sector": "architecture" },
+    { "id": "form",      "name": "FORM",        "group": "system8", "url": "", "pass": "src", "exts": ["glb","gltf","obj"], "sector": "architecture" },
+    { "id": "threshold", "name": "THRESHOLD",   "group": "system8", "url": "", "pass": "src", "exts": ["png","jpg","jpeg","webp"], "sector": "art" },
+    { "id": "cutout",    "name": "CUTOUT",      "group": "system8", "url": "", "pass": "src", "exts": ["png","jpg","jpeg","webp","mp4","mov"], "sector": "generation" },
+    { "id": "roschack",  "name": "ROSCHACK",    "group": "system8", "url": "", "pass": "src", "exts": ["png","jpg","jpeg","webp"], "sector": "art" },
+    { "id": "mixer",     "name": "VIDEO MIXER", "group": "system8", "url": "", "pass": "src", "exts": ["mp4","mov","webm"], "sector": "video" },
+    { "id": "feedback",  "name": "FEEDBACK",    "group": "system8", "url": "", "pass": "src", "exts": ["mp4","mov","png","jpg"], "sector": "video" },
+    { "id": "keha",      "name": "KEHÄ",        "group": "system8", "url": "", "sector": "art" },
+    { "id": "autotypo",  "name": "AUTO TYPO",   "group": "system8", "url": "", "sector": "art" },
+    { "id": "blackfield","name": "BLACK FIELD", "group": "system8", "url": "", "sector": "video" },
+    { "id": "lightforce","name": "LIGHT FORCE", "group": "system8", "url": "", "sector": "art" },
+    { "id": "justsitting","name": "JUST SITTING","group": "system8", "url": "", "sector": "brain" },
+    { "id": "paja",      "name": "PAJA",        "group": "system8", "url": "", "sector": "brain" },
+
+    { "id": "obsidian",  "name": "Obsidian",    "group": "apps", "uri": "obsidian://open?vault={vault}&file={vaultpath}", "exts": ["md"], "sector": "brain" },
+    { "id": "blender",   "name": "Blender",     "group": "apps", "open": { "mac": "Blender", "win": "C:/Program Files/Blender Foundation/Blender 4.2/blender.exe" }, "exts": ["blend","fbx","obj","glb","gltf","usd","usdz","abc","stl","ply"], "sector": "architecture" },
+    { "id": "unreal",    "name": "Unreal Engine","group": "apps", "open": { "mac": "UnrealEditor", "win": "C:/Program Files/Epic Games/UE_5.4/Engine/Binaries/Win64/UnrealEditor.exe" }, "exts": ["uproject","umap"], "sector": "architecture" },
+    { "id": "touchdesigner","name": "TouchDesigner","group": "apps", "open": { "mac": "TouchDesigner", "win": "C:/Program Files/Derivative/TouchDesigner/bin/TouchDesigner.exe" }, "exts": ["toe","tox"], "sector": "video" },
+    { "id": "resolume",  "name": "Resolume Wire","group": "apps", "open": { "mac": "Wire", "win": "C:/Program Files/Resolume Wire/Wire.exe" }, "exts": ["mov","mp4"], "sector": "video" },
+    { "id": "bitwig",    "name": "Bitwig",      "group": "apps", "open": { "mac": "Bitwig Studio", "win": "C:/Program Files/Bitwig Studio/Bitwig Studio.exe" }, "exts": ["bwproject","wav","aif","aiff"], "sector": "art" },
+    { "id": "comfyui",   "name": "ComfyUI",     "group": "apps", "url": "http://127.0.0.1:8188/", "sector": "generation" },
+    { "id": "midjourney","name": "Midjourney",  "group": "apps", "url": "https://www.midjourney.com/imagine", "sector": "generation" },
+    { "id": "claude",    "name": "Claude",      "group": "apps", "url": "https://claude.ai/new", "sector": "ideas" },
+    { "id": "cursor",    "name": "Cursor",      "group": "apps", "open": { "mac": "Cursor", "win": "C:/Users/YOU/AppData/Local/Programs/cursor/Cursor.exe" }, "exts": ["html","jsx","tsx","py","glsl"], "sector": "brain" },
+    { "id": "framer",    "name": "Framer",      "group": "apps", "url": "https://framer.com/projects", "sector": "art" }
+  ],
+
+  "tasks": [
+    { "id": "reindex", "name": "Reindex archive",   "builtin": "reindex" },
+    { "id": "thumbs",  "name": "Thumbnails · newest 2,000", "builtin": "thumbs", "count": 2000 },
+    { "id": "test",    "name": "Test agent · five steps", "cmd": ["{python}", "-c", "import time\nfor i in range(5):\n    print('step', i + 1, 'of 5', flush=True); time.sleep(1)\nprint('done')"] },
+    { "id": "hermes",  "name": "Hermes · nightly digest", "machine": "pc", "note": "Set cmd to your Hermes Agent start command", "cmd": [] },
+    { "id": "ask",     "name": "Asking agent · demo", "work": "Mars crater city", "cmd": ["{python}", "-c", "import time\nprint('S8: needs your OK to overwrite the renders', flush=True)\ntime.sleep(30)"] }
+  ]
+}

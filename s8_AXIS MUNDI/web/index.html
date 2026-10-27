@@ -1,0 +1,64 @@
+<!doctype html>
+<html lang="en" data-theme="light">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>SYSTEM 8 Control Room</title>
+<meta name="s8-token" content="">
+<meta name="s8-theme" content="light">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Inter+Tight:wght@400;700&display=swap">
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+<!--S8:BODY-->
+<div id="app">
+  <canvas id="field" aria-label="Control room field"></canvas>
+  <div id="flags" aria-hidden="true"></div>
+  <div id="dom" hidden></div>
+
+  <div class="corner tl">
+    <button id="bL" class="fc" title="System · sources, kinds, settings  ( [ )" aria-label="Open system panel">
+      <svg width="18" height="12" viewBox="0 0 18 12" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M0 1h18M0 6h18M0 11h18"/></svg>
+    </button>
+    <nav id="trail" aria-label="Trail"></nav>
+  </div>
+
+  <div class="corner tr">
+    <div class="stepper">
+      <button id="vPrev" class="fc cl" aria-label="Previous view">‹</button>
+      <button id="vLab" class="cl" aria-haspopup="true" title="Views  1 – 4">RINGS</button>
+      <button id="vNext" class="fc cl" aria-label="Next view">›</button>
+      <div id="vList" hidden></div>
+    </div>
+    <button id="dotb" title="Agents and tasks" aria-label="Agents and tasks"><span id="dot" class="sdot idle"></span></button>
+    <button id="bR" class="fc cl" title="Tools · selection · run  ( ] )" aria-label="Open tools panel">]</button>
+  </div>
+
+  <div id="search">
+    <span class="k cl">/</span>
+    <input id="q" type="search" placeholder="Search" autocomplete="off" spellcheck="false" aria-label="Search the archive">
+    <span id="qn" class="lab"></span>
+    <button id="ql" class="lab" hidden title="Turn the search into a lens (Enter)">+ Lens</button>
+    <button id="qx" class="lab" hidden aria-label="Clear search">Clear</button>
+  </div>
+
+  <div id="legend" hidden></div>
+  <span id="insetL" class="lab" hidden>Above</span>
+  <canvas id="inset" hidden aria-label="Overview — click for all"></canvas>
+
+  <div id="veil"></div>
+  <aside id="pL" class="panel left" aria-label="System panel"></aside>
+  <aside id="pR" class="panel right" aria-label="Tools panel"></aside>
+
+  <div id="tip"></div>
+  <div id="ghost"></div>
+  <div id="toast" role="status"></div>
+  <div id="boot"><div class="bx"><div class="cl">SYSTEM 8 · Control room</div><div class="bar"><i></i></div><div id="bootMsg" class="lab dim">Starting</div></div></div>
+</div>
+<!--S8:SCRIPTS-->
+<script src="demo.js"></script>
+<script src="app.js"></script>
+</body>
+</html>
