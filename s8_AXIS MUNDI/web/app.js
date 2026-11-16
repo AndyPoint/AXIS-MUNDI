@@ -1,4 +1,4 @@
-/* SYSTEM 8 · Control room 1.3
+/* SYSTEM 8 · Control room 1.5
    One archive, one radial grammar. Every level looks the same: the focus in the centre, three rings of structure,
    an outer field of files. Zooming re-centres the rings on a child — dots become spokes, spokes become names,
    names become thumbnails. Graph = the same rings with bundled links. Patch = the node room for wiring material into tools.
@@ -47,7 +47,7 @@
     left: false, right: false, tools: [], tasks: [], progress: null, caps: {}, status: null,
     theme: 'auto', weight: keep.get('weight', 'sqrt'),
     year: 0, ctxList: null, sidecars: new Map(), openLog: null,
-    lenses: [], activeLens: 0, flags: new Map(), deadlines: new Map(), dl: new Map(), groups: [],
+    engines: [], lenses: [], activeLens: 0, flags: new Map(), deadlines: new Map(), dl: new Map(), groups: [], multi: new Set(),
   };
   let D = null, C = null, W = 0, H = 0;
   const field = $('#field'), fx = field.getContext('2d');
@@ -126,6 +126,7 @@
     if (x && x.ln) for (const l of x.ln) { const t = resolveLink(l); if (t !== undefined && t !== i) out.push(t); }
     if (x && x.sc >= 0) out.push(x.sc);
     for (const b of backlinks(i)) out.push(b);
+    const u = D.ulinks && D.ulinks.get(i); if (u) for (const j of u) out.push(j);
     return [...new Set(out)].slice(0, 200);
   }
   function byTime() {
@@ -601,7 +602,7 @@
               thumbs.push({ i, x: cx + ca * rc - tw / 2, y: cy + sa * rc - thh / 2, w: tw, h: thh, a: thumbA, hit });
               rEnd = rc + ext + 4;
             }
-            if (nameA > 0) labels.push({ i, ang, r: rEnd + 4, a: nameA * (hit ? 1 : 0.3), px, strong: i === selI || i === hovI });
+            if (nameA > 0) labels.push({ i, ang, r: rEnd + 4, a: nameA * (hit ? 1 : 0.3), px, strong: i === selI || i === hovI || S.multi.has(i) });
             this.leaves.push({ i, ang, r0, r1: Math.max(rEnd, rt + 6), px });
           }
           ctx.lineWidth = lw; ctx.lineCap = 'butt';
@@ -616,6 +617,7 @@
           if (img) drawCover(ctx, img, t.x, t.y, t.w, t.h);
           else { ctx.fillStyle = C.d; ctx.font = '700 10px ' + F; ctx.textAlign = 'center'; ctx.textBaseline = 'middle'; ctx.fillText(extOf(t.i).toUpperCase(), t.x + t.w / 2, t.y + t.h / 2); }
           ctx.fillStyle = C.k[D.k[t.i]]; ctx.fillRect(t.x, t.y + t.h - 4, t.w, 4);
+          if (S.multi.has(t.i) && t.i !== selI) { ctx.strokeStyle = C.a; ctx.lineWidth = 2; ctx.strokeRect(t.x - 1.5, t.y - 1.5, t.w + 3, t.h + 3); ctx.fillStyle = C.a; ctx.fillRect(t.x + t.w - 9, t.y - 1.5, 10.5, 10.5); ctx.lineWidth = 1; }
           if (t.i === selI || t.i === hovI) { ctx.strokeStyle = t.i === selI ? C.a : C.t; ctx.lineWidth = t.i === selI ? 2 : 1; ctx.strokeRect(t.x - 1.5, t.y - 1.5, t.w + 3, t.h + 3); ctx.lineWidth = 1; }
           ctx.globalAlpha = 1;
           this.leaves.push({ i: t.i, box: [t.x, t.y, t.w, t.h] });
@@ -626,6 +628,8 @@
           if (t) radText(ctx, t, cx, cy, L.r, L.ang);
           ctx.globalAlpha = 1;
         }
+        // picked files (shift-click): a small red-orange square at the foot of the line
+        if (S.multi.size) { ctx.fillStyle = C.a; for (const lf of this.leaves) if (lf.ang != null && S.multi.has(lf.i)) { const x = cx + Math.cos(lf.ang) * (lf.r0 - 6), y = cy + Math.sin(lf.ang) * (lf.r0 - 6); ctx.fillRect(x - 3.5, y - 3.5, 7, 7); } }
         if (selI >= 0) for (const lf of this.leaves) if (lf.i === selI && lf.ang != null) { ctx.strokeStyle = C.a; ctx.beginPath(); ctx.arc(cx + Math.cos(lf.ang) * (lf.r0 + 10), cy + Math.sin(lf.ang) * (lf.r0 + 10), 5, 0, TAU); ctx.stroke(); break; }
       },
 
@@ -855,7 +859,7 @@
         if ((h.type === 'arc' || h.type === 'label') && ev && ev.shiftKey && !graph) { openLens(nodeLens(this, h.id)); return; }
         if (h.type === 'center') { if (this.lens && this.focus === this.home) return; const p = this.tree.nodes[this.focus].parent; if (p >= 0) this.zoomTo(p); else openPanel('right', 'run'); return; }
         if (h.type === 'arc' || h.type === 'label') { if (h.id !== this.focus) this.zoomTo(h.id); return; }
-        if (h.type === 'leaf') { if (dbl) openItem(h.i, this.focusList()); else select(h.i); return; }
+        if (h.type === 'leaf') { if (ev && (ev.shiftKey || ev.metaKey || ev.ctrlKey)) { togglePick(h.i); return; } if (dbl) openItem(h.i, this.focusList()); else select(h.i); return; }
         if (h.type === 'cell') { const c = this.childToward(this.tree.leafOf[h.i]); if (c >= 0) this.zoomTo(c); }
       },
       focusList() { const nd = this.tree.nodes[this.focus]; return this.tree.order.subarray(nd.a, Math.min(nd.b, nd.a + 60000)); },
@@ -1183,6 +1187,7 @@
     const set = new Set(D.notes), edges = [], ek = new Set();
     for (const i of D.notes) for (const j of linkedOf(i)) { set.add(j); const a = Math.min(i, j), b = Math.max(i, j), key = a * 4194304 + b; if (a !== b && !ek.has(key)) { ek.add(key); edges.push(a, b); } }
     for (const [i, x] of D.x) if (x.sc >= 0) { set.add(i); set.add(x.sc); }
+    if (D.ulinks) for (const [i, js] of D.ulinks) for (const j of js) { set.add(i); set.add(j); const a = Math.min(i, j), b = Math.max(i, j), key = a * 4194304 + b; if (!ek.has(key)) { ek.add(key); edges.push(a, b); } }
     const gt = buildTree(Int32Array.from([...set]), { name: 'Linked', leafMax: 40 });
     gt.edges = edges; gt.edgeCount = edges.length / 2;
     Graph.set(gt);
@@ -1389,8 +1394,9 @@
     const cap = el('div', 'cap'); cap.append(el('span', null, kn === 'note' || kn === 'skill' ? titleOf(i) : D.n[i]), el('span', 'dim', fmon(D.t[i])));
     b.append(im, cap);
     b.title = D.n[i];
-    b.onclick = () => select(i);
-    b.ondblclick = () => openItem(i, list);
+    if (S.multi.has(i)) b.classList.add('picked');
+    b.onclick = e => { if (e.shiftKey || e.metaKey || e.ctrlKey) togglePick(i, b); else select(i); };
+    b.ondblclick = e => { if (!(e.shiftKey || e.metaKey || e.ctrlKey)) openItem(i, list); };
     b.onkeydown = e => { if (e.key === 'Enter') { e.stopPropagation(); openItem(i, list); } };
     return b;
   }
@@ -1536,14 +1542,289 @@
   [['image', 'png jpg jpeg webp heic heif gif tif tiff avif'], ['video', 'mp4 mov m4v webm mkv avi'], ['audio', 'wav mp3 aif aiff flac ogg m4a bwproject als'],
     ['3d', 'blend glb gltf obj fbx usd usdz usda usdc abc stl ply uproject umap splat dwg dxf 3dm ifc skp'], ['text', 'md txt pdf epub html jsx tsx py glsl'], ['any', 'toe tox']]
     .forEach(([t, l]) => l.split(' ').forEach(e => { EXT_TYPE[e] = t; }));
-  const typeColor = t => (t === 'image' ? C.k[D.kindIx.ai] : t === 'video' ? C.k[D.kindIx.video] : t === 'audio' ? C.k[D.kindIx.audio] : t === '3d' ? C.k[D.kindIx.m3d] : t === 'text' ? C.t : C.d);
+  const typeColor = t => (t === 'image' ? C.k[D.kindIx.ai] : t === 'video' ? C.k[D.kindIx.video] : t === 'audio' ? C.k[D.kindIx.audio] : t === '3d' || t === 'material' ? C.k[D.kindIx.m3d] : t === 'text' ? C.t : C.d);
   const compat = (a, b) => a === b || a === 'any' || b === 'any';
+  // ───────────────────────────────────────── live links: the Builder's link language in the patch room
+  // A link is one mapping between one signal (a number 0–1 arriving from somewhere) and one parameter (a number a tool
+  // accepts, with min, max, default). The mapping owns range, curve, smoothing, quantize, invert — nothing else does.
+  // Tools join once: mounted inside a node ({ name, mount(el), params, signals, actions, unmount }) or remotely through
+  // s8link.js and the bridge's link hub. Links run while this page is open, in any view.
+  const CURVES = { linear: t => t, ease: t => t * t * (3 - 2 * t), exp: t => t * t * t, log: t => Math.pow(t, 1 / 3) };
+  const LIVE_TYPES = new Set(['local', 'sliders', 'midi', 'live']);
+  const LOCAL_PORTS = ['time.sin', 'time.tri', 'time.beat', 'time.bar', 'pointer.x', 'pointer.y'];
+  // two small tools that join by mounting — the same contract any SYSTEM 8 tool can follow
+  const MOUNTED = {
+    'example-pad': { name: 'Pad · example', make() {
+      let x = 0.5, y = 0.5, pr = 0, down = false, cv = null, raf = 0, trail = 0.6; const pts = [];
+      const draw = () => { if (!cv) return; const c = cv.getContext('2d'), w = cv.width, h = cv.height; if (!down) pr *= 0.9; pts.push([x, y, pr]); if (pts.length > 60) pts.shift();
+        c.fillStyle = C.s; c.fillRect(0, 0, w, h); c.fillStyle = C.t; pts.forEach(([a, b, p], k) => { c.globalAlpha = (k / pts.length) * trail; const s = 2 + p * 10; c.fillRect(a * w - s / 2, (1 - b) * h - s / 2, s, s); }); c.globalAlpha = 1; c.fillStyle = C.a; c.fillRect(x * w - 3, (1 - y) * h - 3, 6, 6); raf = requestAnimationFrame(draw); };
+      return {
+        mount(el2) { cv = document.createElement('canvas'); cv.width = 220; cv.height = 120; cv.className = 'lmc'; el2.appendChild(cv);
+          const mv = e => { const r = cv.getBoundingClientRect(); x = clamp((e.clientX - r.left) / r.width, 0, 1); y = clamp(1 - (e.clientY - r.top) / r.height, 0, 1); if (down) pr = e.pressure > 0 && e.pressure !== 0.5 ? e.pressure : 1; };
+          cv.addEventListener('pointerdown', e => { e.stopPropagation(); down = true; cv.setPointerCapture(e.pointerId); mv(e); });
+          cv.addEventListener('pointermove', mv); cv.addEventListener('pointerup', () => { down = false; });
+          raf = requestAnimationFrame(draw); },
+        params: { trail: { get: () => trail, set: v => { trail = v; }, min: 0, max: 1, default: 0.6 } },
+        signals: { x: () => x, y: () => y, pressure: () => pr },
+        unmount() { cancelAnimationFrame(raf); cv = null; },
+      };
+    } },
+    'example-ring': { name: 'Ring · example', make() {
+      let radius = 34, petals = 9, twist = 0.2, weight = 1.5, spin = 0, cv = null, raf = 0;
+      const draw = t => { if (!cv) return; const c = cv.getContext('2d'), w = cv.width, h = cv.height; c.fillStyle = C.s; c.fillRect(0, 0, w, h); c.strokeStyle = C.t; c.lineWidth = weight;
+        for (let k = 0; k < petals; k++) { const a = k / petals * TAU + t * 0.001 * spin; c.beginPath(); for (let s2 = 0; s2 <= 24; s2++) { const u = s2 / 24, rr = radius * Math.sin(u * Math.PI) * u * 1.6, aa = a + twist * Math.sin(u * Math.PI) * 1.4; const px = w / 2 + Math.cos(aa) * rr, py = h / 2 + Math.sin(aa) * rr; if (s2) c.lineTo(px, py); else c.moveTo(px, py); } c.stroke(); }
+        c.fillStyle = C.a; c.fillRect(w / 2 - 2, h / 2 - 2, 4, 4); raf = requestAnimationFrame(draw); };
+      return {
+        mount(el2) { cv = document.createElement('canvas'); cv.width = 220; cv.height = 120; cv.className = 'lmc'; el2.appendChild(cv); raf = requestAnimationFrame(draw); },
+        params: {
+          radius: { get: () => radius, set: v => { radius = v; }, min: 6, max: 60, default: 34 },
+          petals: { get: () => petals, set: v => { petals = Math.round(v); }, min: 3, max: 32, default: 9 },
+          twist: { get: () => twist, set: v => { twist = v; }, min: -1, max: 1, default: 0.2 },
+          weight: { get: () => weight, set: v => { weight = v; }, min: 0.5, max: 5, default: 1.5 },
+          spin: { get: () => spin, set: v => { spin = v; }, min: -2, max: 2, default: 0 },
+        },
+        signals: {},
+        unmount() { cancelAnimationFrame(raf); cv = null; },
+      };
+    } },
+  };
+  const Live = {
+    sig: new Map(), tools: new Map(), inst: new Map(), hosts: new Map(), sent: new Map(), smooth: new Map(), out: new Map(),
+    ws: null, hub: 'off', bpm: 120, t0: performance.now(), listeners: 0, midi: 'off', learnNode: null, ptr: [0.5, 0.5], last: 0, meterT: 0,
+    write(id, v, raw, origin) {
+      let s = this.sig.get(id); if (!s) this.sig.set(id, (s = { id, v: 0, raw: 0, ts: 0, origin, hits: 0 }));
+      s.v = v; s.raw = raw === undefined ? v : raw; s.ts = performance.now(); s.origin = origin; s.hits++;
+    },
+    read(id) { const s = this.sig.get(id); return s ? s.v : null; },
+    // which signal a node's output port carries
+    sigId(nd, port) {
+      if (!nd) return null;
+      if (nd.type === 'local' || nd.type === 'midi') return port;
+      if (nd.type === 'sliders') return 'slider.' + nd.id + '.' + port;
+      if (nd.type === 'live') return nd.tool + '.' + port;
+      return null;
+    },
+    table(tool) { return this.tools.get(tool) || null; },
+    // ports of the live node types: outs are signals, ins are parameters
+    ports(nd) {
+      if (nd.type === 'local') return { ins: [], outs: LOCAL_PORTS.concat(this.hub === 'on' ? ['clock.beat', 'clock.bar'] : []) };
+      if (nd.type === 'sliders') return { ins: [], outs: ['1', '2', '3', '4', '5', '6', '7', '8'] };
+      if (nd.type === 'midi') return { ins: [], outs: ['midi.note.last', 'midi.vel.last', 'midi.gate', 'midi.bend'].concat((nd.ccs || []).map(c => 'midi.cc.' + c)) };
+      if (nd.type === 'live') { const t = this.table(nd.tool); if (!t) return { ins: [], outs: [] }; const ps = Object.keys(t.params || {}); return { ins: ps, outs: ps.concat(t.signals || []), actions: t.actions || [] }; }
+      return { ins: [], outs: [] };
+    },
+    // mounted tools: make once per node, keep their element alive across redraws of the patch
+    ensureMount(nd) {
+      if (nd.type !== 'live' || nd.src !== 'mount' || this.inst.has(nd.id)) return;
+      const def = MOUNTED[nd.tool]; if (!def) return;
+      const I = def.make(), host = document.createElement('div'); host.className = 'lmount';
+      try { I.mount(host); } catch (e) { toast(def.name + ' could not mount: ' + e.message); return; }
+      this.inst.set(nd.id, { tool: nd.tool, I }); this.hosts.set(nd.id, host);
+      const params = {}; for (const [k, d] of Object.entries(I.params || {})) params[k] = { min: d.min, max: d.max, default: d.default !== undefined ? d.default : d.min, value: d.get ? d.get() : undefined };
+      this.tools.set(nd.tool, { tool: nd.tool, name: def.name, params, signals: Object.keys(I.signals || {}), actions: Object.keys(I.actions || {}), problems: [], joined: true, via: 'mount' });
+    },
+    unmount(id) { const m = this.inst.get(id); if (m) { try { m.I.unmount(); } catch (e) { /* gone */ } this.inst.delete(id); this.hosts.delete(id); } },
+    // the bridge's link hub
+    connect() {
+      if (!S.live || this.ws) return;
+      let ws; try { ws = new WebSocket((location.protocol === 'https:' ? 'wss://' : 'ws://') + location.host + '/ws'); } catch (e) { return; }
+      this.ws = ws; this.hub = 'connecting';
+      ws.onopen = () => { this.hub = 'on'; this.refresh(); };
+      ws.onclose = () => { this.ws = null; this.hub = 'off'; for (const t of this.tools.values()) if (t.via === 'net') t.joined = false; this.refresh(); setTimeout(() => this.connect(), 3000); };
+      ws.onmessage = ev => {
+        let m; try { m = JSON.parse(ev.data); } catch (e) { return; }
+        if (m.t === 'sig') { this.write(m.id, +m.v, m.raw, 'NET'); const dot = m.id.indexOf('.'), tl = this.tools.get(m.id.slice(0, dot)); if (tl && tl.params && tl.params[m.id.slice(dot + 1)] && m.raw !== undefined) tl.params[m.id.slice(dot + 1)].value = +m.raw; }
+        else if (m.t === 'tools') { this.bpm = m.bpm || this.bpm; for (const t of m.tools || []) this.tools.set(t.tool, { ...t, via: 'net' }); this.refresh(); }
+        else if (m.t === 'hello') { this.tools.set(m.tool, { ...m, via: 'net' }); this.refresh(); if (this.probe && this.probe.tool === m.tool) { clearTimeout(this.probe.t); toast(m.name + ' joined · ' + Object.keys(m.params || {}).length + ' parameters' + (m.problems && m.problems.length ? ' · ' + m.problems.length + ' problems' : ' · table follows the contract')); this.probe = null; } }
+        else if (m.t === 'bye') { const t = this.tools.get(m.tool); if (t) t.joined = false; this.refresh(); }
+        else if (m.t === 'clock') this.bpm = m.bpm;
+      };
+    },
+    send(o) { if (this.ws && this.ws.readyState === 1) this.ws.send(JSON.stringify(o)); },
+    setBpm(b) { this.bpm = clamp(+b || 120, 20, 300); this.send({ t: 'clock', bpm: this.bpm }); },
+    refresh() { if (S.mode === 'patch') { Patch.view(); if (S.left) renderLeft(); } },
+    // probe: open a tool with the hub's address and wait for it to say hello
+    probeTool(t) {
+      if (!S.live) return toast('Sample data — probing needs the bridge running');
+      const url = t.url || ''; if (!url) return toast(t.name + ' has no address in config.json');
+      const hub = (location.protocol === 'https:' ? 'wss://' : 'ws://') + location.host + '/ws';
+      const target = url + (url.includes('?') ? '&' : '?') + 's8=' + encodeURIComponent(hub);
+      const id = (t.link || t.id).toLowerCase();
+      this.probe = { tool: id, t: setTimeout(() => { toast(t.name + ' did not join within 8 s — it does not load s8link.js yet (see How to join)'); this.probe = null; }, 8000) };
+      window.open(target, '_blank', 'noopener');
+    },
+    // MIDI, desktop Chromium: every CC, note and bend becomes a signal
+    async midiOn() {
+      if (!navigator.requestMIDIAccess) { this.midi = 'none'; toast('No Web MIDI in this browser — use Chrome or Edge on the desktop, or the Builder through the bridge'); return; }
+      try { const acc = await navigator.requestMIDIAccess({ sysex: false }); this.midi = 'on';
+        const bind = () => acc.inputs.forEach(inp => { inp.onmidimessage = e => this.onMidi(e.data); });
+        acc.onstatechange = bind; bind(); toast('MIDI on · ' + acc.inputs.size + ' input' + (acc.inputs.size === 1 ? '' : 's'));
+      } catch (e) { this.midi = 'denied'; toast('MIDI permission denied'); }
+      this.refresh();
+    },
+    onMidi(d) {
+      const [s, a, b] = d, cmd = s & 0xf0;
+      if (cmd === 0xb0) {
+        this.write('midi.cc.' + a, b / 127, b, 'MIDI'); this.send({ t: 'sig', id: 'midi.cc.' + a, v: b / 127, raw: b });
+        const nd = this.learnNode && Patch.P && Patch.P.nodes.find(n => n.id === this.learnNode);
+        if (nd) { nd.ccs = nd.ccs || []; if (!nd.ccs.includes(a)) { nd.ccs.push(a); toast('Learned CC ' + a); } this.learnNode = null; Patch.persist(); Patch.view(); }
+      } else if (cmd === 0x90 && b > 0) { this.write('midi.note.last', a / 127, a, 'MIDI'); this.write('midi.vel.last', b / 127, b, 'MIDI'); this.write('midi.gate', 1, 1, 'MIDI'); }
+      else if (cmd === 0x80 || (cmd === 0x90 && b === 0)) this.write('midi.gate', 0, 0, 'MIDI');
+      else if (cmd === 0xe0) this.write('midi.bend', ((b << 7) | a) / 16383, (b << 7) | a, 'MIDI');
+    },
+    // one mapping, exactly as the Builder resolves it
+    resolve(m, dt) {
+      const P = Patch.P, A = P.nodes.find(n => n.id === m.a), B = P.nodes.find(n => n.id === m.b); if (!A || !B) return null;
+      const raw = this.read(this.sigId(A, m.ap)); if (raw === null) return null;
+      let t = clamp((raw - (m.inMin ?? 0)) / (((m.inMax ?? 1) - (m.inMin ?? 0)) || 1), 0, 1);
+      if (m.invert) t = 1 - t;
+      if (m.quantize > 1) { const n = m.quantize - 1; t = Math.round(t * n) / n; }
+      t = (CURVES[m.curve] || CURVES.linear)(t);
+      if (m.smooth > 0) { const a = 1 - Math.exp(-dt / (m.smooth * 0.5)), p = this.smooth.get(m.id); t = p === undefined ? t : p + (t - p) * a; }
+      this.smooth.set(m.id, t);
+      const tb = this.table(B.tool), d = tb && tb.params && tb.params[m.bp]; if (!d) return null;
+      const lo = m.outMin == null || m.outMin === '' ? d.min : +m.outMin, hi = m.outMax == null || m.outMax === '' ? d.max : +m.outMax;
+      return { v: lo + (hi - lo) * t, n: t, raw };
+    },
+    frame(now) {
+      const dt = Math.min(0.1, (now - (this.last || now)) / 1000) || 1 / 60; this.last = now;
+      const t = (now - this.t0) / 1000, beats = t * this.bpm / 60;
+      const ts = 0.5 + 0.5 * Math.sin(t * TAU / 4), tt = Math.abs(((t / 2) % 2) - 1), tb = beats % 1, tr = (beats / 4) % 1;   // shown as the 0–1 value, not seconds
+      this.write('time.sin', ts, ts, 'LOCAL'); this.write('time.tri', tt, tt, 'LOCAL');
+      this.write('time.beat', tb, tb, 'LOCAL'); this.write('time.bar', tr, tr, 'LOCAL');
+      this.write('pointer.x', this.ptr[0], this.ptr[0], 'LOCAL'); this.write('pointer.y', this.ptr[1], this.ptr[1], 'LOCAL');
+      // mounted tools publish their parameters and signals
+      for (const [, M] of this.inst) {
+        const tb = this.tools.get(M.tool);
+        for (const [k, d] of Object.entries(M.I.params || {})) { const v = +d.get(); if (tb && tb.params[k]) tb.params[k].value = v; this.write(M.tool + '.' + k, clamp((v - d.min) / ((d.max - d.min) || 1), 0, 1), v, 'LOCAL'); }
+        for (const [k, f] of Object.entries(M.I.signals || {})) this.write(M.tool + '.' + k, clamp(+f(), 0, 1), +f(), 'LOCAL');
+      }
+      const P = Patch.P;
+      if (P && P.links && P.links.length) for (const m of P.links) {
+        if (m.enabled === false) { this.out.delete(m.id); continue; }
+        const r = this.resolve(m, dt); if (!r) { this.out.delete(m.id); continue; }
+        this.out.set(m.id, r);
+        const B = P.nodes.find(n => n.id === m.b);
+        const M = [...this.inst.entries()].find(([nid]) => nid === B.id);
+        if (M) { const d = M[1].I.params[m.bp]; if (d && Math.abs(d.get() - r.v) > 1e-6) d.set(r.v); }
+        else { const key = B.tool + '.' + m.bp, prev = this.sent.get(key), tb = this.table(B.tool), span = tb && tb.params[m.bp] ? (tb.params[m.bp].max - tb.params[m.bp].min) || 1 : 1;
+          if (prev === undefined || Math.abs(prev - r.v) > span / 2000) { this.sent.set(key, r.v); this.send({ t: 'set', tool: B.tool, p: m.bp, v: r.v }); if (tb && tb.params[m.bp]) tb.params[m.bp].value = r.v; } }
+      }
+      if (S.mode === 'patch' && now - this.meterT > 80) { this.meterT = now; this.meters(); }
+    },
+    // the meters in the nodes and the inspector follow the values without redrawing the patch
+    meters() {
+      if (!Patch.world) return;
+      Patch.world.querySelectorAll('.lr[data-sig]').forEach(r => { const v = this.read(r.dataset.sig), b = r.querySelector('.lm i'); if (b) b.style.width = (v == null ? 0 : clamp(v, 0, 1) * 100) + '%'; const n = r.querySelector('.lv'); if (n) { const s = this.sig.get(r.dataset.sig); n.textContent = s ? (Math.abs(s.raw) >= 100 ? Math.round(s.raw) : (+s.raw).toFixed(2)) : '—'; } });
+      document.querySelectorAll('[data-lmeter]').forEach(b => { const r = this.out.get(b.dataset.lmeter); b.style.width = (r ? (b.dataset.side === 'in' ? clamp(r.raw, 0, 1) : r.n) * 100 : 0) + '%'; });
+      document.querySelectorAll('[data-lval]').forEach(e => { const r = this.out.get(e.dataset.lval); e.textContent = r ? (+r.v).toFixed(3) : 'silent — the authored value stands'; });
+    },
+    loop() { const f = now => { try { this.frame(now); } catch (e) { console.warn('live', e); } requestAnimationFrame(f); }; requestAnimationFrame(f); addEventListener('pointermove', e => { this.ptr = [e.clientX / innerWidth, 1 - e.clientY / innerHeight]; }, { passive: true }); },
+  };
+  // ───────────────────────────────────────── flow nodes (1.6): sets, prompts, AI, PNG sequences, 3D materials, bridges
+  // A file wire now carries a package: files, text, and (for 3D) one material made of named maps.
+  const MAT_SLOTS = ['texture', 'bump', 'light', 'reflection', 'normal', 'displacement', 'transparency'];
+  const FLOW_TYPES = new Set(['set', 'text', 'ai', 'seq', 'mat', 'import3d', 'send']);
+  const DEMO_ENGINES = [{ id: 'comfy', name: 'ComfyUI · local', where: 'local', gives: 'image', auto: false }, { id: 'comfy-video', name: 'ComfyUI · video', where: 'local', gives: 'video', auto: false },
+    { id: 'midjourney', name: 'Midjourney', where: 'cloud', gives: 'image', auto: false }, { id: 'claude', name: 'Claude', where: 'cloud', gives: 'text', auto: false }];
+  const SEND_TARGETS = [['resolume', 'Resolume Arena · Avenue'], ['resolve', 'DaVinci Resolve'], ['wire', 'Resolume Wire']];
+  const engines = () => (S.engines && S.engines.length ? S.engines : DEMO_ENGINES);
+  const engineOf = nd => engines().find(e => e.id === nd.engine) || engines()[0];
+  const Flow = {
+    notes: [],
+    // the files a set node holds: stored as [index, path] pairs so they survive a reindex
+    setItems(nd) {
+      if (nd.gid) { const g = S.groups.find(x => x.id === nd.gid); if (g) { let out = (g.items || []).slice(); if (g.rule) { const r = computeMatch(g.rule, null), bt = byTime(); for (let q = 0; q < bt.length && out.length < 500; q++) if (r.m[bt[q]]) out.push(bt[q]); } return [...new Set(out)].slice(0, 500); } }
+      const out = []; for (const [i, key] of nd.items || []) { if (i >= 0 && i < D.N && pathOf(i) === key) out.push(i); } return out;
+    },
+    setType(nd) { const it = this.setItems(nd); if (!it.length) return 'any'; const ts = new Set(it.map(i => TYPE_OF_KIND[kindOf(i)] || 'any')); return ts.size === 1 ? [...ts][0] : 'any'; },
+    fill(nd, items) { nd.gid = null; nd.items = [...items].slice(0, 500).map(i => [i, pathOf(i)]); },
+    ports(nd) {
+      if (nd.type === 'set') return { ins: [], outs: [this.setType(nd)] };
+      if (nd.type === 'text') return { ins: [], outs: ['text'] };
+      if (nd.type === 'ai') return { ins: ['text', 'image', 'video'], inl: ['prompt', 'references', 'video'], outs: [engineOf(nd).gives || 'image'] };
+      if (nd.type === 'seq') return { ins: ['image'], inl: ['frames'], outs: ['video'] };
+      if (nd.type === 'mat') return { ins: MAT_SLOTS.map(() => 'image'), inl: MAT_SLOTS, outs: ['material'] };
+      if (nd.type === 'import3d') return { ins: ['3d', 'material'], inl: ['object', 'material'], outs: ['3d'] };
+      if (nd.type === 'send') return { ins: ['video', 'image'], outs: [] };
+      return { ins: [], outs: [] };
+    },
+    title(nd) {
+      if (nd.type === 'set') { const g = nd.gid && S.groups.find(x => x.id === nd.gid); return nd.title || (g ? g.name : 'File set'); }
+      if (nd.type === 'text') return nd.title || 'Prompt · text';
+      if (nd.type === 'ai') return engineOf(nd).name;
+      if (nd.type === 'seq') return 'PNG sequence → video';
+      if (nd.type === 'mat') return nd.title || 'Material group';
+      if (nd.type === 'import3d') return '3D import · Blender';
+      if (nd.type === 'send') return 'Send to · ' + (SEND_TARGETS.find(t => t[0] === (nd.target || 'resolume')) || SEND_TARGETS[0])[1];
+      return nd.type;
+    },
+    tag(nd) { return nd.type === 'set' ? 'set' : nd.type === 'text' ? 'text' : nd.type === 'ai' ? 'AI · ' + (engineOf(nd).where || 'engine') : nd.type === 'seq' ? 'ffmpeg' : nd.type === 'mat' ? '7 maps' : nd.type === 'import3d' ? 'bridge' : 'bridge'; },
+    colour(nd) { return nd.type === 'set' ? typeColor(this.setType(nd)) : nd.type === 'seq' || nd.type === 'send' ? typeColor('video') : nd.type === 'mat' || nd.type === 'import3d' ? typeColor('3d') : C.t; },
+    thumb(i, w, h) {
+      const kn = kindOf(i), box = el('span', 'fth');
+      if (S.live) { const img = new Image(); img.src = API.thumb(i); img.alt = ''; img.onerror = () => { box.textContent = extOf(i).toUpperCase(); }; box.appendChild(img); }
+      else { const c = document.createElement('canvas'); c.width = w; c.height = h; window.S8DEMO.paint(c.getContext('2d'), i, w, h, kn, workName(D.w[i])); box.appendChild(c); }
+      return box;
+    },
+    body(nd, body, P) {
+      const stop = e => e.stopPropagation(), save = () => { P.persist(); };
+      const field = (label, value, on, attrs) => { const r = el('label', 'frow'); r.append(el('span', 'lab dim', label)); const i = el('input', 'fld'); i.value = value; Object.assign(i, attrs || {}); i.onchange = () => { on(i.value); save(); P.view(); }; i.onpointerdown = stop; i.onkeydown = stop; r.appendChild(i); return r; };
+      const choose = (label, opts, value, on) => { const r = el('label', 'frow'); r.append(el('span', 'lab dim', label)); const s = el('select', 'fld'); opts.forEach(([v, n]) => { const o = el('option', null, n); o.value = v; s.appendChild(o); }); s.value = value; s.onchange = () => { on(s.value); save(); P.view(); }; s.onpointerdown = stop; r.appendChild(s); return r; };
+      if (nd.type === 'set') {
+        const it = this.setItems(nd), strip = el('div', 'fstrip');
+        it.slice(0, 8).forEach(i => strip.appendChild(VISUAL.has(kindOf(i)) ? this.thumb(i, 96, 96) : el('span', 'fth', extOf(i).toUpperCase())));
+        if (it.length) body.appendChild(strip);
+        const ty = this.setType(nd); body.appendChild(el('div', 'lab dim', it.length ? fmt(it.length) + (ty === 'any' ? ' files' : ty === 'image' ? ' images' : ty === 'video' ? ' videos' : ' ' + ty + ' files') + (nd.gid ? ' · follows the virtual folder' : '') : 'Empty. Fill it from picked files or a virtual folder.'));
+        const r = el('div', 'btns');
+        const pk = el('button', 'lab', S.multi.size ? 'Use picked · ' + S.multi.size : 'Use picked'); pk.disabled = !S.multi.size; pk.title = 'Shift-click files anywhere, then press this'; pk.onclick = e => { e.stopPropagation(); this.fill(nd, S.multi); save(); P.view(); toast(S.multi.size + ' files in the set'); };
+        r.appendChild(pk); body.appendChild(r);
+        if (S.groups.length) body.appendChild(choose('Folder', [['', '— virtual folder —']].concat(S.groups.map(g => [g.id, g.name])), nd.gid || '', v => { nd.gid = v || null; if (v) nd.items = []; }));
+      } else if (nd.type === 'text') {
+        const t = el('textarea', 'fld ftext'); t.value = nd.text || ''; t.placeholder = 'Write the prompt here'; t.setAttribute('aria-label', 'Prompt text'); t.rows = 5;
+        t.onchange = () => { nd.text = t.value; save(); }; t.onpointerdown = stop; t.onkeydown = stop; t.onwheel = stop; body.appendChild(t);
+      } else if (nd.type === 'ai') {
+        const e = engineOf(nd);
+        body.appendChild(choose('Engine', engines().map(x => [x.id, x.name + ' · ' + (x.where || '')]), e.id, v => { nd.engine = v; }));
+        body.appendChild(el('div', 'lab dim', e.auto ? 'Run starts it with the prompt and the references.' : 'Run copies the prompt, gathers the references in one folder and opens ' + e.name.split(' · ')[0] + '.'));
+      } else if (nd.type === 'seq') {
+        body.appendChild(field('Frames / s', nd.fps || 25, v => { nd.fps = clamp(parseFloat(v) || 25, 1, 120); }, { type: 'number', min: 1, max: 120 }));
+        body.appendChild(el('div', 'lab dim', 'Stills in name order become one MP4, saved beside the first frame.'));
+      } else if (nd.type === 'mat') {
+        body.appendChild(el('div', 'lab dim', 'One material from up to seven maps. Wire only the ones you have.'));
+      } else if (nd.type === 'import3d') {
+        body.appendChild(el('div', 'lab dim', 'Opens Blender, imports the object and builds the material from the group.'));
+      } else if (nd.type === 'send') {
+        const tg = nd.target || 'resolume';
+        body.appendChild(choose('To', SEND_TARGETS, tg, v => { nd.target = v; }));
+        if (tg === 'resolume') { const g = el('div', 'fpair'); g.append(field('Layer', nd.layer || 1, v => { nd.layer = Math.max(1, parseInt(v, 10) || 1); }, { type: 'number', min: 1 }), field('From clip', nd.column || 1, v => { nd.column = Math.max(1, parseInt(v, 10) || 1); }, { type: 'number', min: 1 })); body.appendChild(g); body.appendChild(el('div', 'lab dim', 'Each file lands in the next clip of the layer.')); }
+        else if (tg === 'resolve') { body.appendChild(field('Bin', nd.bin || '', v => { nd.bin = v.trim(); }, { placeholder: 'current bin' })); const c = el('label', 'frow fcheck'), cb = el('input'); cb.type = 'checkbox'; cb.checked = !!nd.sequence; cb.onchange = () => { nd.sequence = cb.checked; save(); }; cb.onpointerdown = stop; c.append(cb, el('span', 'lab dim', 'Numbered stills as one clip')); body.appendChild(c); body.appendChild(el('div', 'lab dim', 'Into the media pool of the open project.')); }
+        else body.appendChild(el('div', 'lab dim', 'Opens Wire with the first file and shows the rest in the folder.'));
+      }
+    },
+    // hand one node's package to the bridge
+    async job(nd, payload, label) {
+      if (!S.live) { Flow.notes.push(label); return; }
+      let r; try { r = await API.post('/api/job', Object.assign({ name: Patch.P.name }, payload)); } catch (e) { r = { ok: false, error: String(e.message || e) }; }
+      if (!r.ok) { Patch.states[nd.id] = 'failed'; Patch.view(); return toast(Flow.title(nd) + ' · ' + (r.error || 'failed')); }
+      if (r.did === 'handoff') {
+        let copied = false; if (r.prompt) { try { await navigator.clipboard.writeText(r.prompt); copied = true; } catch (e) { copied = false; } }
+        if (r.url) window.open(r.url, '_blank', 'noopener');
+        toast(r.engine + ' · ' + (r.prompt ? (copied ? 'prompt copied — paste it' : 'prompt is in ' + r.dir + '/prompt.txt') : 'no prompt') + (r.files ? ' · ' + r.files + ' references shown in a folder' : ''));
+      } else if (r.did === 'resolume') toast('Resolume · ' + r.loaded + ' files in layer ' + r.layer + ', from clip ' + r.column);
+      else if (r.did === 'opened') toast('Opened in ' + r.target);
+      else if (r.did === 'task') { toast(Flow.title(nd) + ' · started — its log is under Run'); pollTasks(); }
+    },
+  };
   const Patch = {
-    list: [], cur: 0, sel: null, selWire: -1, cam: { x: 40, y: 20, s: 1 }, states: {}, seq: 1,
+    list: [], cur: 0, sel: null, selWire: -1, selLink: null, cam: { x: 40, y: 20, s: 1 }, states: {}, seq: 1,
     get P() { return this.list[this.cur]; },
     colour(nd) {
       if (nd.type === 'material') return C.k[D.k[nd.i]];
       if (nd.type === 'gate') return C.a;
+      if (FLOW_TYPES.has(nd.type)) return Flow.colour(nd);
+      if (nd.type === 'live') return C.t;
+      if (LIVE_TYPES.has(nd.type)) return C.d;
       if (nd.type === 'tool') { const ty = this.ports(nd).ins[0]; return ty ? typeColor(ty) : C.d; }
       return C.t;
     },
@@ -1557,9 +1838,11 @@
       }
       this.cam = { x: 40, y: 20, s: 1 }; this.persist(); this.view();
     },
-    duplicate(id) { const P = this.P, n = P.nodes.find(x => x.id === id); if (!n) return; const c = Object.assign({}, n, { id: this.nid(), x: n.x + 24, y: n.y + 24 }); if (c.type === 'gate') c.accepted = false; P.nodes.push(c); this.sel = c.id; this.persist(); this.view(); },
+    duplicate(id) { const P = this.P, n = P.nodes.find(x => x.id === id); if (!n) return; if (n.type === 'live') return toast('A tool joins once — link more parameters from the same node instead'); const c = Object.assign({}, n, { id: this.nid(), x: n.x + 24, y: n.y + 24 }); if (c.type === 'gate') c.accepted = false; P.nodes.push(c); this.sel = c.id; this.persist(); this.view(); },
     tool(id) { return S.tools.find(x => x.id === id); },
     ports(nd) {
+      if (LIVE_TYPES.has(nd.type)) return { ins: [], outs: [] };
+      if (FLOW_TYPES.has(nd.type)) return Flow.ports(nd);
       if (nd.type === 'material') return { ins: [], outs: [TYPE_OF_KIND[kindOf(nd.i)] || 'any'] };
       if (nd.type === 'tool') { const t = this.tool(nd.tool); const ins = t ? [...new Set((t.exts || []).map(e => EXT_TYPE[e] || 'any'))] : []; return { ins, outs: t && t.outputs ? t.outputs : ins.length ? [ins[0]] : ['any'] }; }
       if (nd.type === 'task') return { ins: ['any'], outs: ['text'] };
@@ -1569,19 +1852,45 @@
     },
     title(nd) {
       if (!nd) return '?';
+      if (FLOW_TYPES.has(nd.type)) return Flow.title(nd);
       if (nd.type === 'material') return titleOf(nd.i);
       if (nd.type === 'tool') { const t = this.tool(nd.tool); return t ? t.name : nd.tool; }
       if (nd.type === 'task') { const t = S.tasks.find(x => x.id === nd.task); return t ? t.name : nd.task; }
       if (nd.type === 'gate') return nd.label || 'Gate · you decide';
       if (nd.type === 'note') return nd.title || 'Collect → note';
+      if (nd.type === 'local') return 'Time · pointer';
+      if (nd.type === 'sliders') return nd.title || 'Sliders';
+      if (nd.type === 'midi') return 'MIDI';
+      if (nd.type === 'live') { const t = Live.table(nd.tool) || (MOUNTED[nd.tool] ? { name: MOUNTED[nd.tool].name } : null), c = this.tool(nd.tool); return t ? t.name : c ? c.name : nd.tool; }
       return nd.type;
     },
-    newPatch(name) { const p = { id: 'p' + Date.now().toString(36), name: name || 'Patch ' + (this.list.length + 1), nodes: [], wires: [] }; this.list.push(p); this.cur = this.list.length - 1; return p; },
+    newPatch(name) { const p = { id: 'p' + Date.now().toString(36), name: name || 'Patch ' + (this.list.length + 1), nodes: [], wires: [], links: [] }; this.list.push(p); this.cur = this.list.length - 1; return p; },
     nid() { return 'n' + (this.seq++) + Math.random().toString(36).slice(2, 5); },
-    spot() { const n = this.P.nodes.length; return { x: Math.round((-this.cam.x + 60 + (n % 4) * 240) / this.cam.s), y: Math.round((-this.cam.y + 60 + Math.floor(n / 4) * 170 + (n % 2) * 24) / this.cam.s) }; },
+    spot() {
+      // first free place, left to right, so a new node never lands on top of another (live nodes are taller and wider)
+      const size = nd => { const e = document.querySelector('.pn[data-id="' + nd.id + '"]'); return e ? [e.offsetWidth, e.offsetHeight] : [252, 200]; };
+      const rects = this.P.nodes.map(nd => { const [w, h] = size(nd); return [nd.x, nd.y, w, h]; });
+      const x0 = Math.round((-this.cam.x + 60) / this.cam.s), y0 = Math.round((-this.cam.y + 60) / this.cam.s);
+      for (let row = 0; row < 12; row++) for (let col = 0; col < 4; col++) {
+        const x = x0 + col * 320, y = y0 + row * 180;
+        if (!rects.some(([rx, ry, rw, rh]) => x < rx + rw + 40 && x + 252 + 40 > rx && y < ry + rh + 30 && y + 160 > ry)) return { x, y };
+      }
+      const n = this.P.nodes.length; return { x: x0 + (n % 4) * 320, y: y0 + Math.floor(n / 4) * 180 };
+    },
     add(spec) { if (!this.P) this.newPatch(); const nd = Object.assign({ id: this.nid() }, this.spot(), spec); this.P.nodes.push(nd); this.sel = nd.id; this.persist(); if (S.mode === 'patch') this.view(); return nd; },
     addMaterial(i) { if (i < 0) return; this.add({ type: 'material', i, key: pathOf(i) }); toast('Added to the patch · ' + titleOf(i)); },
-    remove(id) { const P = this.P; P.nodes = P.nodes.filter(n => n.id !== id); P.wires = P.wires.filter(w => w.a !== id && w.b !== id); this.sel = null; this.persist(); this.view(); },
+    remove(id) { const P = this.P; P.nodes = P.nodes.filter(n => n.id !== id); P.wires = P.wires.filter(w => w.a !== id && w.b !== id); P.links = (P.links || []).filter(m => m.a !== id && m.b !== id); Live.unmount(id); this.sel = null; this.persist(); this.view(); },
+    // a signal link: always a number into a parameter, never a file
+    link(a, ap, b, bp) {
+      const P = this.P; P.links = P.links || [];
+      const A = P.nodes.find(n => n.id === a), B = P.nodes.find(n => n.id === b);
+      if (!A || !B || a === b) return false;
+      if (B.type !== 'live') { toast(this.title(B) + ' has no parameters'); return false; }
+      if (P.links.some(m => m.b === b && m.bp === bp && m.a === a && m.ap === ap)) return false;
+      const m = { id: 'm' + Date.now().toString(36) + Math.random().toString(36).slice(2, 4), a, ap, b, bp, enabled: true, inMin: 0, inMax: 1, outMin: null, outMax: null, curve: 'linear', smooth: 0, quantize: 0, invert: false };
+      P.links.push(m); this.selLink = m.id; this.sel = null; this.selWire = -1; this.persist(); return true;
+    },
+    removeLink(id) { const P = this.P; P.links = (P.links || []).filter(m => m.id !== id); Live.out.delete(id); if (this.selLink === id) this.selLink = null; this.persist(); this.view(); },
     connect(a, ap, b, bp) {
       const P = this.P, A = P.nodes.find(n => n.id === a), B = P.nodes.find(n => n.id === b);
       if (!A || !B || a === b) return false;
@@ -1589,6 +1898,7 @@
       if (!compat(ta, tb)) { toast(this.title(B) + ' takes ' + (this.ports(B).ins.join(' or ') || 'nothing') + ' — ' + this.title(A) + ' gives ' + ta + '. Put a tool between them that turns ' + ta + ' into ' + tb + '.'); return false; }
       if (P.wires.some(w => w.a === a && w.ap === ap && w.b === b && w.bp === bp)) return false;
       if (this.reaches(b, a)) { toast('That wire would make a loop.'); return false; }
+      if (B.type === 'mat' || (B.type === 'import3d')) P.wires = P.wires.filter(w => !(w.b === b && w.bp === bp));
       P.wires.push({ a, ap, b, bp }); this.persist(); return true;
     },
     reaches(from, to) { const P = this.P, seen = new Set(), st = [from]; while (st.length) { const x = st.pop(); if (x === to) return true; if (seen.has(x)) continue; seen.add(x); for (const w of P.wires) if (w.a === x) st.push(w.b); } return false; },
@@ -1600,8 +1910,9 @@
       let list = null;
       if (S.live) { try { const r = await API.get('/api/patches'); list = r.patches; } catch (e) { list = null; } }
       else list = keep.get('patches', null);
-      if (list && list.length) this.list = list.map(p => ({ ...p, nodes: p.nodes.filter(n => this.resolve(n)) }));
+      if (list && list.length) this.list = list.map(p => ({ ...p, links: p.links || [], nodes: p.nodes.filter(n => this.resolve(n)) }));
       else { const sp = this.sample(); if (!sp.nodes.length) { sp.name = 'Patch 1'; sp.id = 'p1'; } this.list = [sp]; }
+      if (!this.list.some(p => p.id === 'live-sample')) this.list.push(this.liveSample());
       this.cur = 0;
     },
     resolve(n) {
@@ -1611,8 +1922,23 @@
       for (let i = 0; i < D.N; i++) if (D.n[i] === name && pathOf(i) === n.key) { n.i = i; return true; }
       return false;
     },
+    liveSample() {
+      // two mounted tools and the clock: the pad's position drives the ring, the clock turns it
+      return { id: 'live-sample', name: 'Live · the pad plays the ring', wires: [], nodes: [
+        { id: 'l0', type: 'live', tool: 'example-pad', src: 'mount', x: 0, y: 0 },
+        { id: 'l1', type: 'local', x: 0, y: 312 },
+        { id: 'l2', type: 'sliders', x: 0, y: 576, vals: [0.5, 0.2, 0, 0, 0, 0, 0, 0] },
+        { id: 'l3', type: 'live', tool: 'example-ring', src: 'mount', x: 336, y: 0 },
+      ], links: [
+        { id: 'ma', a: 'l0', ap: 'x', b: 'l3', bp: 'radius', enabled: true, inMin: 0, inMax: 1, outMin: null, outMax: null, curve: 'ease', smooth: 0.2, quantize: 0, invert: false },
+        { id: 'mb', a: 'l0', ap: 'y', b: 'l3', bp: 'twist', enabled: true, inMin: 0, inMax: 1, outMin: null, outMax: null, curve: 'linear', smooth: 0.3, quantize: 0, invert: false },
+        { id: 'mc', a: 'l1', ap: 'time.sin', b: 'l3', bp: 'petals', enabled: true, inMin: 0, inMax: 1, outMin: 4, outMax: 16, curve: 'linear', smooth: 0, quantize: 7, invert: false },
+        { id: 'md', a: 'l2', ap: '1', b: 'l3', bp: 'spin', enabled: true, inMin: 0, inMax: 1, outMin: null, outMax: null, curve: 'linear', smooth: 0.5, quantize: 0, invert: false },
+        { id: 'me', a: 'l0', ap: 'pressure', b: 'l3', bp: 'weight', enabled: true, inMin: 0, inMax: 1, outMin: null, outMax: null, curve: 'exp', smooth: 0.1, quantize: 0, invert: false },
+      ] };
+    },
     sample() {
-      const p = { id: 'sample', name: 'Mars crater city · scene pipeline', nodes: [], wires: [] };
+      const p = { id: 'sample', name: 'Mars crater city · scene pipeline', nodes: [], wires: [], links: [] };
       const w = D.works.findIndex(x => x.n === 'Mars crater city');
       const pick = (kn, skip) => { if (w < 0) return -1; const st = D.byWork.start, it = D.byWork.items; let c = 0; for (let q = st[w]; q < st[w + 1]; q++) { const i = it[q]; if (kindOf(i) === kn && c++ >= (skip || 0)) return i; } return -1; };
       const ai1 = pick('ai', 3), ai2 = pick('ai', 40), ai3 = pick('ai', 90), m3 = pick('m3d', 0);
@@ -1646,12 +1972,12 @@
       st.append(pa, nm, pb); tb.appendChild(st);
       const mkb = (lab, fn, cls) => { const b = el('button', 'btn cl' + (cls ? ' ' + cls : ''), lab); b.onclick = fn; tb.appendChild(b); return b; };
       mkb('Run', () => this.run(), 'solid'); mkb('Tidy', () => this.tidy()); mkb('+ New patch', () => { this.newPatch(); this.persist(); this.view(); renderTrail(); }); mkb('Library  [', () => openPanel('left'));
-      tb.appendChild(el('span', 'lab dim', P.nodes.length + ' nodes · ' + P.wires.length + ' wires' + (S.live ? '' : ' · kept in this browser')));
+      tb.appendChild(el('span', 'lab dim', P.nodes.length + ' nodes · ' + P.wires.length + ' wires · ' + (P.links || []).length + ' links' + (S.live ? ' · hub ' + (Live.hub === 'on' ? 'on' : 'off') : ' · kept in this browser')));
       v.appendChild(tb);
       const cv = el('div', 'pcv'), world = el('div', 'pw'), svg = document.createElementNS('http://www.w3.org/2000/svg', 'svg');
       svg.setAttribute('class', 'pwires'); world.appendChild(svg); cv.appendChild(world); v.appendChild(cv);
-      if (!P.nodes.length) cv.appendChild(el('p', 'empty pempty', 'Empty patch. Open the library ( [ ) to add material, tools, gates, agents and notes — or select a file anywhere and press P. Drag from an output square to an input square to connect.'));
-      for (const nd of P.nodes) world.appendChild(this.nodeEl(nd));
+      if (!P.nodes.length) cv.appendChild(el('p', 'empty pempty', 'Empty patch. Open the library ( [ ) and start from a template, or add material, tools, gates, agents, notes and live signals — or select a file anywhere and press P. Drag from an output square to an input square to connect.'));
+      for (const nd of P.nodes) { Live.ensureMount(nd); world.appendChild(this.nodeEl(nd)); }
       dom.appendChild(v);
       this.world = world; this.svg = svg; this.cv = cv;
       this.applyCam(); requestAnimationFrame(() => this.wires());
@@ -1665,7 +1991,9 @@
       const st = this.states[nd.id];
       const h = el('div', 'pnh'); const dot = el('span', 'sdot ' + (st === 'running' ? 'run' : st === 'waiting' ? 'wait' : st === 'done' ? '' : 'idle')); dot.title = st || 'not run yet';
       const t = nd.type === 'tool' ? this.tool(nd.tool) : null;
-      h.append(dot, el('span', 'cl pt', this.title(nd)), el('span', 'lab dim', nd.type === 'material' ? KONE[kindOf(nd.i)] : nd.type === 'tool' ? (t && t.group === 'system8' ? 'SYSTEM 8' : 'program') : nd.type === 'note' ? 'output' : nd.type === 'task' ? 'agent' : 'gate'));
+      const lt = nd.type === 'live' ? Live.table(nd.tool) : null;
+      if (LIVE_TYPES.has(nd.type)) { dot.className = 'sdot ' + (nd.type !== 'live' || (lt && lt.joined) ? 'run' : 'idle'); dot.title = nd.type !== 'live' ? 'signals' : lt && lt.joined ? (lt.via === 'mount' ? 'mounted here' : 'joined through the hub') : 'not joined'; }
+      h.append(dot, el('span', 'cl pt', this.title(nd)), el('span', 'lab dim', FLOW_TYPES.has(nd.type) ? Flow.tag(nd) : nd.type === 'material' ? KONE[kindOf(nd.i)] : nd.type === 'tool' ? (t && t.group === 'system8' ? 'SYSTEM 8' : 'program') : nd.type === 'note' ? 'output' : nd.type === 'task' ? 'agent' : nd.type === 'gate' ? 'gate' : nd.type === 'live' ? (lt && lt.joined ? (lt.via === 'mount' ? 'mounted' : 'joined') : 'not joined') : 'signals'));
       e.appendChild(h);
       const body = el('div', 'pnb');
       if (nd.type === 'material') {
@@ -1682,14 +2010,61 @@
         const tk = S.tasks.find(x => x.id === nd.task); body.appendChild(el('div', 'lab dim', tk && tk.last ? tk.last : 'Runs with the wired file as {input}'));
       } else if (nd.type === 'tool') {
         body.appendChild(el('div', 'lab dim', !t ? 'Unknown tool' : !t.usable ? 'No address yet · set in config' : t.via === 'url' ? 'Web tool · opens with ?src=' : t.via === 'uri' ? 'App link' : 'Opens the program with the file'));
-      }
+      } else if (FLOW_TYPES.has(nd.type)) Flow.body(nd, body, this);
+      else if (LIVE_TYPES.has(nd.type)) this.liveBody(nd, body, lt);
       e.appendChild(body);
       const ports = this.ports(nd), pr = el('div', 'pports'), ins = el('div', 'pins'), outs = el('div', 'pouts');
-      ports.ins.forEach((ty, k) => { const p = el('div', 'pp'); const sq = el('span', 'pd in' + (ty === 'text' ? ' ci' : '')); sq.dataset.k = k; sq.dataset.t = ty; sq.style.setProperty('--pc', typeColor(ty)); p.append(sq, el('span', 'lab', ty)); ins.appendChild(p); });
+      ports.ins.forEach((ty, k) => { const p = el('div', 'pp'); const sq = el('span', 'pd in' + (ty === 'text' ? ' ci' : '')); sq.dataset.k = k; sq.dataset.t = ty; sq.style.setProperty('--pc', typeColor(ty)); p.append(sq, el('span', 'lab', (ports.inl && ports.inl[k]) || ty)); ins.appendChild(p); });
       ports.outs.forEach((ty, k) => { const p = el('div', 'pp out'); const sq = el('span', 'pd out' + (ty === 'text' ? ' ci' : '')); sq.dataset.k = k; sq.dataset.t = ty; const oc = nd.type === 'material' ? C.k[D.k[nd.i]] : typeColor(ty); sq.style.setProperty('--pc', oc); p.append(el('span', 'lab', ty), sq); outs.appendChild(p); });
       pr.append(ins, outs); e.appendChild(pr);
       e.addEventListener('dblclick', ev => { if (ev.target.closest('input, button')) return; ev.stopPropagation(); this.activate(nd); });
       return e;
+    },
+    // rows of a live node: parameter in (left), value meter, signal out (right)
+    liveBody(nd, body, lt) {
+      e2: {
+        const host = Live.hosts.get(nd.id); if (host) body.appendChild(host);
+        if (nd.type === 'midi') {
+          const r = el('div', 'btns');
+          const on = el('button', 'lab', Live.midi === 'on' ? 'MIDI on' : 'Connect MIDI'); on.onclick = ev => { ev.stopPropagation(); Live.midiOn(); };
+          const lr = el('button', 'lab' + (Live.learnNode === nd.id ? ' solid' : ''), Live.learnNode === nd.id ? 'Move a knob…' : 'Learn CC'); lr.onclick = ev => { ev.stopPropagation(); Live.learnNode = Live.learnNode === nd.id ? null : nd.id; if (Live.midi !== 'on') Live.midiOn(); this.view(); };
+          r.append(on, lr); body.appendChild(r);
+        }
+        if (nd.type === 'live' && !lt) {
+          const c = this.tool(nd.tool);
+          body.appendChild(el('div', 'lab dim', S.live ? 'Not joined. Open it with the hub address, or add s8link.js to it — see Link check.' : 'Not joined (sample data has no hub).'));
+          if (c && c.url) { const b = el('button', 'lab', 'Probe'); b.onclick = ev => { ev.stopPropagation(); Live.probeTool(c); }; body.appendChild(b); }
+          break e2;
+        }
+        const ports = Live.ports(nd), tb = nd.type === 'live' ? lt : null, ins = new Set(ports.ins);
+        const tbl = el('div', 'ltab');
+        const rows = nd.type === 'live' ? [...new Set([...ports.ins, ...ports.outs])] : ports.outs;
+        rows.forEach((p, k) => {
+          const sid = Live.sigId(nd, p), r = el('div', 'lr'); r.dataset.sig = sid;
+          const pin = el('span', 'ls in' + (ins.has(p) ? '' : ' none')); pin.dataset.p = p; if (!ins.has(p)) pin.setAttribute('aria-hidden', 'true');
+          const nm = el('span', 'ln', nd.type === 'sliders' ? 'S' + p : nd.type === 'local' || nd.type === 'midi' ? p.replace(/^midi\./, '') : p);
+          if (tb && tb.params && tb.params[p]) nm.title = p + ' · ' + tb.params[p].min + ' – ' + tb.params[p].max + ' · default ' + tb.params[p].default;
+          const mtr = el('span', 'lm'); mtr.appendChild(el('i'));
+          const val = el('span', 'lv', '—');
+          const pout = el('span', 'ls out'); pout.dataset.p = p;
+          r.append(pin, nm);
+          if (nd.type === 'sliders') {
+            const rg = el('input'); rg.type = 'range'; rg.min = 0; rg.max = 1; rg.step = 0.001; rg.value = (nd.vals || [])[k] || 0; rg.className = 'lsl'; rg.setAttribute('aria-label', 'Slider ' + p);
+            const put = () => { nd.vals = nd.vals || []; nd.vals[k] = +rg.value; Live.write(sid, +rg.value, +rg.value, 'LOCAL'); Live.send({ t: 'sig', id: sid, v: +rg.value, raw: +rg.value }); };
+            rg.addEventListener('input', put); rg.addEventListener('change', () => this.persist()); rg.addEventListener('pointerdown', ev => ev.stopPropagation());
+            Live.write(sid, +rg.value, +rg.value, 'LOCAL'); r.append(rg);
+          } else r.append(mtr);
+          r.append(val, pout); tbl.appendChild(r);
+        });
+        body.appendChild(tbl);
+        if (ports.actions && ports.actions.length) { const ab = el('div', 'btns'); ports.actions.forEach(a => { const b = el('button', 'lab', a); b.onclick = ev => { ev.stopPropagation(); const M = Live.inst.get(nd.id); if (M && M.I.actions && M.I.actions[a]) M.I.actions[a](); else Live.send({ t: 'act', tool: nd.tool, id: a }); }; ab.appendChild(b); }); body.appendChild(ab); }
+        if (tb && tb.problems && tb.problems.length) body.appendChild(el('div', 'lab lprob', '▲ ' + tb.problems.length + ' problem' + (tb.problems.length > 1 ? 's' : '') + ' in its table'));
+      }
+    },
+    lportPos(id, dir, p) {
+      const e = this.world && this.world.querySelector('.pn[data-id="' + id + '"] .ls.' + dir + '[data-p="' + CSS.escape(p) + '"]'); if (!e) return null;
+      const r = e.getBoundingClientRect(), wr = this.world.getBoundingClientRect();
+      return [(r.left + r.width / 2 - wr.left) / this.cam.s, (r.top + r.height / 2 - wr.top) / this.cam.s];
     },
     portPos(id, dir, k) {
       const e = this.world && this.world.querySelector('.pn[data-id="' + id + '"] .pd.' + dir + '[data-k="' + k + '"]'); if (!e) return null;
@@ -1709,27 +2084,43 @@
         hitp.addEventListener('pointerdown', ev => { ev.stopPropagation(); this.selWire = j; this.sel = null; document.querySelectorAll('.pn.sel').forEach(x => x.classList.remove('sel')); this.wires(); if (S.right) renderRight(); });
         svg.append(path, hitp);
       });
-      if (this.temp) { const path = document.createElementNS(NS, 'path'); path.setAttribute('d', this.wirePath(this.temp.p, this.temp.q)); path.setAttribute('class', 'pwire temp'); path.style.stroke = typeColor(this.temp.t); svg.appendChild(path); }
+      (P.links || []).forEach(m => {
+        const p = this.lportPos(m.a, 'out', m.ap), q = this.lportPos(m.b, 'in', m.bp); if (!p || !q) return;
+        const path = document.createElementNS(NS, 'path'); path.setAttribute('d', this.wirePath(p, q)); path.setAttribute('class', 'plink' + (this.selLink === m.id ? ' sel' : '') + (m.enabled === false ? ' off' : ''));
+        const hitp = document.createElementNS(NS, 'path'); hitp.setAttribute('d', this.wirePath(p, q)); hitp.setAttribute('class', 'pwhit');
+        hitp.addEventListener('pointerdown', ev => { ev.stopPropagation(); this.selLink = m.id; this.selWire = -1; this.sel = null; document.querySelectorAll('.pn.sel').forEach(x => x.classList.remove('sel')); this.wires(); if (S.right) renderRight(); else openPanel('right'); });
+        svg.append(path, hitp);
+      });
+      if (this.temp) { const path = document.createElementNS(NS, 'path'); path.setAttribute('d', this.wirePath(this.temp.p, this.temp.q)); path.setAttribute('class', this.temp.sig ? 'plink temp' : 'pwire temp'); if (!this.temp.sig) path.style.stroke = typeColor(this.temp.t); svg.appendChild(path); }
     },
     toWorld(ev) { const r = this.cv.getBoundingClientRect(); return [(ev.clientX - r.left - this.cam.x) / this.cam.s, (ev.clientY - r.top - this.cam.y) / this.cam.s]; },
     bindCanvas(cv) {
       cv.addEventListener('pointerdown', ev => {
-        if (ev.target.closest('button, input')) return;
+        if (ev.target.closest('button, input, .lmc')) return;
+        const lport = ev.target.closest('.ls.out');
+        if (lport) {
+          const id = lport.closest('.pn').dataset.id, p = lport.dataset.p, pp = this.lportPos(id, 'out', p);
+          this.temp = { sig: true, a: id, ap: p, p: pp, q: pp };
+          this.world.querySelectorAll('.ls.in:not(.none)').forEach(x => x.classList.add(x.closest('.pn').dataset.id !== id ? 'ok' : 'no'));
+          this.world.querySelectorAll('.pd.in').forEach(x => x.classList.add('no'));
+          cv.setPointerCapture(ev.pointerId); ev.preventDefault(); return;
+        }
         const port = ev.target.closest('.pd.out'), head = ev.target.closest('.pnh'), node = ev.target.closest('.pn');
         if (port) {
           const id = port.closest('.pn').dataset.id, k = +port.dataset.k, t = port.dataset.t, p = this.portPos(id, 'out', k);
           this.temp = { a: id, ap: k, t, p, q: p };
           this.world.querySelectorAll('.pd.in').forEach(x => x.classList.add(compat(t, x.dataset.t) && x.closest('.pn').dataset.id !== id ? 'ok' : 'no'));
+          this.world.querySelectorAll('.ls.in:not(.none)').forEach(x => x.classList.add('no'));
           cv.setPointerCapture(ev.pointerId); ev.preventDefault(); return;
         }
         if (node) {
-          const id = node.dataset.id; this.sel = id; this.selWire = -1;
+          const id = node.dataset.id; this.sel = id; this.selWire = -1; this.selLink = null;
           document.querySelectorAll('.pn.sel').forEach(x => x.classList.remove('sel')); node.classList.add('sel'); this.wires();
           if (S.right) renderRight();
           if (head || !ev.target.closest('.pnb')) { const nd = this.P.nodes.find(n => n.id === id); this.dragN = { nd, el: node, x: ev.clientX, y: ev.clientY, x0: nd.x, y0: nd.y }; cv.setPointerCapture(ev.pointerId); }
           return;
         }
-        this.sel = null; this.selWire = -1; document.querySelectorAll('.pn.sel').forEach(x => x.classList.remove('sel')); this.wires(); if (S.right) renderRight();
+        this.sel = null; this.selWire = -1; this.selLink = null; document.querySelectorAll('.pn.sel').forEach(x => x.classList.remove('sel')); this.wires(); if (S.right) renderRight();
         this.dragC = { x: ev.clientX, y: ev.clientY, cx: this.cam.x, cy: this.cam.y }; cv.setPointerCapture(ev.pointerId);
       });
       cv.addEventListener('pointermove', ev => {
@@ -1739,9 +2130,13 @@
       });
       cv.addEventListener('pointerup', ev => {
         if (this.temp) {
-          const tgt = document.elementFromPoint(ev.clientX, ev.clientY), port = tgt && tgt.closest ? tgt.closest('.pd.in') : null;
+          const tgt = document.elementFromPoint(ev.clientX, ev.clientY), port = tgt && tgt.closest ? tgt.closest('.pd.in') : null, lin = tgt && tgt.closest ? tgt.closest('.ls.in:not(.none)') : null;
           let ok = false;
-          if (port) ok = this.connect(this.temp.a, this.temp.ap, port.closest('.pn').dataset.id, +port.dataset.k);
+          if (this.temp.sig) {
+            if (lin) { ok = this.link(this.temp.a, this.temp.ap, lin.closest('.pn').dataset.id, lin.dataset.p); if (ok) { this.temp = null; this.view(); toast('Linked · shape it in the right panel'); if (!S.right) openPanel('right'); return; } }
+            else if (port) toast('A signal is a number — ' + this.title(this.P.nodes.find(n => n.id === port.closest('.pn').dataset.id)) + ' takes files. Link signals to parameters (the small bars on live nodes).');
+          } else if (lin) toast('A file cannot drive a parameter — parameters take numbers. Use a signal: the pad, a slider, MIDI, the clock or another tool.');
+          else if (port) ok = this.connect(this.temp.a, this.temp.ap, port.closest('.pn').dataset.id, +port.dataset.k);
           this.temp = null; this.view(); if (ok) toast('Connected');
           return;
         }
@@ -1761,7 +2156,7 @@
       else if (nd.type === 'gate') { nd.accepted = !nd.accepted; this.persist(); this.view(); }
       else if (nd.type === 'note') this.collect(nd, this.upstream(nd.id));
     },
-    upstream(id) { const P = this.P, out = []; for (const w of P.wires) if (w.b === id) { const A = P.nodes.find(n => n.id === w.a); if (A && A.type === 'material') out.push(A.i); else if (A && A.type === 'gate' && A.accepted) out.push(...this.upstream(A.id)); } return out; },
+    upstream(id) { const P = this.P, out = []; for (const w of P.wires) if (w.b === id) { const A = P.nodes.find(n => n.id === w.a); if (A && A.type === 'material') out.push(A.i); else if (A && A.type === 'set') out.push(...Flow.setItems(A)); else if (A && A.type === 'gate' && A.accepted) out.push(...this.upstream(A.id)); } return out; },
     async collect(nd, items) {
       const title = (nd.title || 'Collection').trim();
       if (!items.length) { toast('Wire material into the note first'); return; }
@@ -1773,14 +2168,38 @@
       for (const w of P.wires) indeg.set(w.b, indeg.get(w.b) + 1);
       const q = ids.filter(id => !indeg.get(id)), order = [];
       while (q.length) { const id = q.shift(); order.push(id); for (const w of P.wires) if (w.a === id) { indeg.set(w.b, indeg.get(w.b) - 1); if (!indeg.get(w.b)) q.push(w.b); } }
-      const vals = new Map(); this.states = {};
-      let waiting = 0, opened = 0;
+      const vals = new Map(); this.states = {}; Flow.notes = [];
+      let waiting = 0, opened = 0, jobs = 0;
       for (const id of order) {
-        const nd = P.nodes.find(n => n.id === id), ins = P.wires.filter(w => w.b === id).map(w => vals.get(w.a)).filter(Boolean);
+        const nd = P.nodes.find(n => n.id === id), inw = P.wires.filter(w => w.b === id).map(w => ({ bp: w.bp, v: vals.get(w.a) })).filter(x => x.v), ins = inw.map(x => x.v);
         const blocked = ins.some(v2 => v2.blocked), items = [].concat(...ins.map(v2 => v2.items || [])), pending = ins.some(v2 => v2.pending);
+        const text = ins.map(v2 => v2.text || '').filter(Boolean).join('\n\n'), mat = ins.map(v2 => v2.mat).find(Boolean) || null;
+        const at = k => [].concat(...inw.filter(x => x.bp === k).map(x => x.v.items || []));
         if (blocked) { this.states[id] = 'blocked'; vals.set(id, { blocked: true }); continue; }
         if (nd.type === 'material') { this.states[id] = 'done'; vals.set(id, { items: [nd.i] }); }
-        else if (nd.type === 'gate') { if (nd.accepted) { this.states[id] = 'done'; vals.set(id, { items }); } else { this.states[id] = 'waiting'; waiting++; vals.set(id, { blocked: true }); } }
+        else if (nd.type === 'set') { const it = Flow.setItems(nd); this.states[id] = it.length ? 'done' : 'waiting'; vals.set(id, { items: it }); }
+        else if (nd.type === 'text') { this.states[id] = 'done'; vals.set(id, { items: [], text: nd.text || '' }); }
+        else if (nd.type === 'gate') { if (nd.accepted) { this.states[id] = 'done'; vals.set(id, { items, text, mat, pending }); } else { this.states[id] = 'waiting'; waiting++; vals.set(id, { blocked: true }); } }
+        else if (nd.type === 'mat') { const slots = {}; MAT_SLOTS.forEach((sl, k) => { const v = at(k)[0]; if (v != null) slots[sl] = v; }); this.states[id] = Object.keys(slots).length ? 'done' : 'waiting'; vals.set(id, { items: [], mat: slots }); }
+        else if (nd.type === 'ai') {
+          const refs = at(1).concat(at(2)), e = engineOf(nd);
+          if (!text && !at(0).length && !refs.length) { this.states[id] = 'waiting'; vals.set(id, { pending: true, items: [] }); continue; }
+          Flow.job(nd, { kind: 'ai', engine: e.id, text, textItems: at(0), items: refs }, 'would send the prompt' + (refs.length ? ' and ' + refs.length + ' references' : '') + ' to ' + e.name); jobs++;
+          this.states[id] = 'running'; vals.set(id, { pending: true, items: [] });
+        } else if (nd.type === 'seq') {
+          if (items.length < 2) { this.states[id] = 'waiting'; vals.set(id, { pending: true, items: [] }); continue; }
+          Flow.job(nd, { kind: 'seq', items, fps: nd.fps || 25 }, 'would make one video of ' + items.length + ' frames at ' + (nd.fps || 25) + ' fps'); jobs++;
+          this.states[id] = 'running'; vals.set(id, { pending: true, items: [] });
+        } else if (nd.type === 'import3d') {
+          const obj = at(0), n = mat ? Object.keys(mat).length : 0;
+          if (!obj.length && !n) { this.states[id] = 'waiting'; vals.set(id, { pending: true, items: [] }); continue; }
+          Flow.job(nd, { kind: 'import3d', items: obj.slice(0, 1), slots: mat || {} }, 'would open Blender, import ' + (obj.length ? D.n[obj[0]] : 'nothing') + (n ? ' and build a material from ' + n + ' maps' : '')); jobs++;
+          this.states[id] = 'running'; vals.set(id, { pending: true, items: [] });
+        } else if (nd.type === 'send') {
+          if (!items.length) { this.states[id] = 'waiting'; continue; }
+          Flow.job(nd, { kind: 'send', target: nd.target || 'resolume', items, layer: nd.layer || 1, column: nd.column || 1, bin: nd.bin || '', sequence: !!nd.sequence }, 'would send ' + items.length + ' files to ' + Flow.title(nd).replace('Send to · ', '')); jobs++;
+          this.states[id] = 'done';
+        }
         else if (nd.type === 'tool') {
           const t = this.tool(nd.tool);
           if (pending && !items.length) { this.states[id] = 'waiting'; vals.set(id, { pending: true, items: [] }); continue; }
@@ -1791,7 +2210,7 @@
       }
       this.view();
       computeFlags(); invalidate();
-      toast('Ran ' + order.length + ' nodes' + (opened ? ' · ' + opened + ' sent to tools' : '') + (waiting ? ' · ' + waiting + ' gate waiting for you' : '') + (order.length < ids.length ? ' · a loop was skipped' : ''));
+      toast('Ran ' + order.length + ' nodes' + (opened ? ' · ' + opened + ' sent to tools' : '') + (jobs ? ' · ' + jobs + (jobs === 1 ? ' job handed over' : ' jobs handed over') : '') + (waiting ? ' · ' + waiting + ' gate waiting for you' : '') + (order.length < ids.length ? ' · a loop was skipped' : '') + (Flow.notes.length ? ' — sample data: ' + Flow.notes.join(' · ') : ''));
     },
   };
 
@@ -1960,16 +2379,19 @@
       if (S.mode === 'rings') invalidate();
     } catch (e) { /* bridge gone */ }
   }
-  async function reloadIndex() {
+  async function reloadIndex(keep) {
     try {
-      const J = await API.get('/api/index');
+      const J = await API.get('/api/index'), oldN = D ? D.N : 0, oldHidden = S.hiddenK;
       D = makeStore(J); S.hiddenK = new Uint8Array(D.kinds.length); S.match = null; S.mcount = 0; S.mlist = null;
+      await loadLinks();
       readColors(); buildTrees(); TH.clear();
-      S.item = -1; S.list = -1; S.sel = -1; S.hist = []; S.lenses = []; S.activeLens = 0;
+      const grown = keep && D.N >= oldN;
+      if (grown) { if (oldHidden && oldHidden.length === S.hiddenK.length) S.hiddenK = oldHidden; for (const L of S.lenses) buildLens(L); layoutLenses(); }
+      else { S.item = -1; S.list = -1; S.sel = -1; S.hist = []; S.lenses = []; S.activeLens = 0; S.multi.clear(); }
       await loadGroups(); await loadDeadlines(); computeFlags();
       if (S.q || S.date) runSearch();
       $('#q').placeholder = 'Search ' + fmt(D.N) + ' items';
-      render(); toast('Index updated · ' + fmt(D.N) + ' items');
+      render(); renderPickbar(); if (!grown) toast('Index updated · ' + fmt(D.N) + ' items');
     } catch (e) { toast('Could not reload the index: ' + e.message); }
   }
   function updateDot() {
@@ -2013,10 +2435,221 @@
     a.onclick = onPrev; b.onclick = onNext; a.setAttribute('aria-label', 'Previous'); b.setAttribute('aria-label', 'Next');
     v.style.minWidth = '84px'; v.style.textAlign = 'center'; st2.append(a, v, b); r.appendChild(st2); return r;
   }
+  // ───────────────────────────────────────── patch templates: a start, copied into a new patch
+  const LK = (a, ap, b, bp, o) => Object.assign({ a, ap, b, bp, enabled: true, inMin: 0, inMax: 1, outMin: null, outMax: null, curve: 'linear', smooth: 0, quantize: 0, invert: false }, o || {});
+  const newestOf = (kn, n) => { const out = [], bt = byTime(); for (let q = 0; q < bt.length && out.length < n; q++) if (kindOf(bt[q]) === kn) out.push(bt[q]); return out; };
+  const TEMPLATES = [
+    { id: 'pad', name: 'Pad plays the ring', tag: 'live', about: 'Your hand on the pad drives the ring; the clock turns its petals.',
+      make: () => { const p = Patch.liveSample(); return { nodes: p.nodes, wires: [], links: p.links }; } },
+    { id: 'drift', name: 'Slow drift · the clock plays', tag: 'live', about: 'No hands: four clock signals move the ring, smoothed so it breathes.',
+      make: () => ({ wires: [], nodes: [{ id: 'a', type: 'local', x: 0, y: 0 }, { id: 'b', type: 'live', tool: 'example-ring', src: 'mount', x: 336, y: 0 }],
+        links: [LK('a', 'time.sin', 'b', 'radius', { curve: 'ease', smooth: 1.2, outMin: 14, outMax: 58 }), LK('a', 'time.tri', 'b', 'twist', { invert: true, smooth: 0.8 }),
+          LK('a', 'time.bar', 'b', 'petals', { outMin: 3, outMax: 18, quantize: 6 }), LK('a', 'time.beat', 'b', 'weight', { curve: 'exp', outMin: 0.5, outMax: 4, invert: true })] }) },
+    { id: 'desk', name: 'Desk · eight sliders', tag: 'live', about: 'Six sliders, six settings, each with its own curve — a mixing desk for two tools.',
+      make: () => ({ wires: [], nodes: [{ id: 'a', type: 'sliders', x: 0, y: 0, vals: [0.5, 0.3, 0.6, 0.3, 0.5, 0.6, 0, 0] }, { id: 'b', type: 'live', tool: 'example-ring', src: 'mount', x: 336, y: 0 }, { id: 'c', type: 'live', tool: 'example-pad', src: 'mount', x: 336, y: 330 }],
+        links: [LK('a', '1', 'b', 'radius', { curve: 'ease', smooth: 0.15 }), LK('a', '2', 'b', 'petals', { quantize: 8 }), LK('a', '3', 'b', 'twist', { smooth: 0.2 }),
+          LK('a', '4', 'b', 'weight', { curve: 'exp' }), LK('a', '5', 'b', 'spin', { smooth: 0.6 }), LK('a', '6', 'c', 'trail')] }) },
+    { id: 'midi', name: 'MIDI knobs · CC 1–4', tag: 'live', about: 'Knobs sending CC 1–4 play the ring; the last note sets its spin. Press Connect, or Learn to use other knobs.',
+      make: () => ({ wires: [], nodes: [{ id: 'a', type: 'midi', ccs: [1, 2, 3, 4], x: 0, y: 0 }, { id: 'b', type: 'live', tool: 'example-ring', src: 'mount', x: 336, y: 0 }],
+        links: [LK('a', 'midi.cc.1', 'b', 'radius', { curve: 'ease', smooth: 0.1 }), LK('a', 'midi.cc.2', 'b', 'petals'), LK('a', 'midi.cc.3', 'b', 'twist', { smooth: 0.1 }),
+          LK('a', 'midi.cc.4', 'b', 'weight', { curve: 'exp' }), LK('a', 'midi.note.last', 'b', 'spin', { smooth: 0.4 })] }) },
+    { id: 'ai', name: 'Prompt + references → AI', tag: 'files', about: 'One text node and one set of images go into an AI node: prompt on the first input, references on the second.',
+      make: () => { const pair = i => [i, pathOf(i)]; return { links: [], nodes: [
+        { id: 't', type: 'text', x: 0, y: 0, text: 'A crater city at dusk, seen from the rim. Keep the palette and the massing of the references.' },
+        { id: 's', type: 'set', x: 0, y: 230, title: 'References', items: newestOf('ai', 8).map(pair) },
+        { id: 'a', type: 'ai', engine: 'midjourney', x: 300, y: 60 }, { id: 'g', type: 'gate', label: 'Keep the good ones', x: 580, y: 90 }],
+        wires: [{ a: 't', ap: 0, b: 'a', bp: 0 }, { a: 's', ap: 0, b: 'a', bp: 1 }, { a: 'a', ap: 0, b: 'g', bp: 0 }] }; } },
+    { id: 'pngseq', name: 'PNG sequence → video → Resolume', tag: 'files', about: 'A set of stills becomes one video; the same stills also go to Resolume as clips.',
+      make: () => { const pair = i => [i, pathOf(i)]; return { links: [], nodes: [
+        { id: 's', type: 'set', x: 0, y: 0, title: 'Frames', items: newestOf('ai', 24).map(pair) }, { id: 'q', type: 'seq', fps: 25, x: 300, y: 0 },
+        { id: 'r', type: 'send', target: 'resolume', layer: 1, column: 1, x: 300, y: 230 }, { id: 'v', type: 'send', target: 'resolve', bin: 'From SYSTEM 8', sequence: true, x: 600, y: 230 }],
+        wires: [{ a: 's', ap: 0, b: 'q', bp: 0 }, { a: 's', ap: 0, b: 'r', bp: 1 }, { a: 's', ap: 0, b: 'v', bp: 1 }] }; } },
+    { id: 'mat3d', name: '3D object + material group → Blender', tag: 'files', about: 'Texture, bump and normal map meet in one material group; the group and the object go to Blender together.',
+      make: () => { const m = newestOf('m3d', 1)[0], im = newestOf('ai', 3), nodes = [], wires = []; if (m === undefined) return { nodes, wires, links: [] };
+        nodes.push({ id: 'o', type: 'material', i: m, key: pathOf(m), x: 0, y: 0 }, { id: 'g', type: 'mat', title: 'Material group', x: 300, y: 250 }, { id: 'b', type: 'import3d', x: 600, y: 60 });
+        im.forEach((i, j) => { nodes.push({ id: 'i' + j, type: 'material', i, key: pathOf(i), x: 0, y: 250 + j * 200 }); wires.push({ a: 'i' + j, ap: 0, b: 'g', bp: [0, 1, 4][j] }); });
+        wires.push({ a: 'o', ap: 0, b: 'b', bp: 0 }, { a: 'g', ap: 0, b: 'b', bp: 1 }); return { nodes, wires, links: [] }; } },
+    { id: 'scene', name: 'Image → SC3NE → CUTOUT', tag: 'files', about: 'A gate lets you choose the base image; the 3D file goes to Blender; references collect into a note.',
+      make: () => { const p = Patch.sample(); return { nodes: p.nodes, wires: p.wires, links: [] }; } },
+    { id: 'board', name: 'Moodboard → note', tag: 'files', about: 'The six newest AI images pass a gate, then collect into one note that links them all.',
+      make: () => { const ims = newestOf('ai', 6), nodes = [], wires = [];
+        nodes.push({ id: 'g', type: 'gate', label: 'Choose what goes in', x: 300, y: 200 }, { id: 'n', type: 'note', title: 'Moodboard · ' + fdate(Date.now() / 1000), x: 560, y: 200 });
+        ims.forEach((i, j) => { nodes.push({ id: 'm' + j, type: 'material', i, key: pathOf(i), x: 0, y: j * 92 }); wires.push({ a: 'm' + j, ap: 0, b: 'g', bp: 0 }); });
+        wires.push({ a: 'g', ap: 0, b: 'n', bp: 0 }); return { nodes, wires, links: [] }; } },
+    { id: 'thresh', name: 'Photo → THRESHOLD → MIRROR', tag: 'files', about: 'The newest photo becomes binary structure, then a symmetric drawing.',
+      make: () => { const ph = newestOf('photo', 1)[0], nodes = [], wires = []; if (ph === undefined) return { nodes, wires, links: [] };
+        nodes.push({ id: 'm', type: 'material', i: ph, key: pathOf(ph), x: 0, y: 0 }, { id: 't', type: 'tool', tool: 'threshold', x: 300, y: 10 }, { id: 'r', type: 'tool', tool: 'mirror', x: 600, y: 10 });
+        wires.push({ a: 'm', ap: 0, b: 't', bp: 0 }, { a: 't', ap: 0, b: 'r', bp: 0 }); return { nodes, wires, links: [] }; } },
+  ];
+  function fromTemplate(id) {
+    const T = TEMPLATES.find(t => t.id === id); if (!T) return;
+    const src = T.make(), map = {};
+    const nodes = src.nodes.filter(n => n.type !== 'tool' || Patch.tool(n.tool)).map(n => { const nid = Patch.nid(); map[n.id] = nid; return Object.assign({}, n, { id: nid }); });
+    const wires = src.wires.filter(w => map[w.a] && map[w.b]).map(w => Object.assign({}, w, { a: map[w.a], b: map[w.b] }));
+    const links = (src.links || []).filter(m => map[m.a] && map[m.b]).map(m => Object.assign({}, m, { id: 'k' + Patch.nid(), a: map[m.a], b: map[m.b] }));
+    Patch.list.push({ id: 'p' + Date.now().toString(36), name: T.name, nodes, wires, links, from: T.id });
+    Patch.cur = Patch.list.length - 1; Patch.sel = null; Patch.selLink = null; Patch.selWire = -1; Patch.cam = { x: 40, y: 20, s: 1 };
+    Patch.persist();
+    if (S.mode !== 'patch') setView('patch'); else Patch.view();
+    renderTrail(); if (S.left) renderLeft();
+    toast('New patch from the template · ' + T.name);
+  }
+  function templateSection() {
+    const s = sec('Templates · start from one', 'templates', TEMPLATES.length);
+    TEMPLATES.forEach(T => { const r = el('button', 'row'); r.title = T.about; r.append(el('span', 'grow', T.name), el('span', 'r lab', T.tag === 'live' ? 'live links' : 'file wires')); r.onclick = () => fromTemplate(T.id); s.appendChild(r); });
+    s.appendChild(el('p', 'note', 'Each one opens as a new patch you can change — the template stays as it is.'));
+    return s;
+  }
+
+  // ───────────────────────────────────────── help: says what is in front of you, and teaches in short lessons
+  const Help = { on: keep.get('help', true), lesson: null, step: 0, key: '' };
+  const flash = sel => { const e = sel && document.querySelector(sel); if (!e) return; e.classList.remove('helphl'); void e.offsetWidth; e.classList.add('helphl'); setTimeout(() => e.classList.remove('helphl'), 2600); };
+  const toPatch = () => { if (S.mode !== 'patch') setView('patch'); };
+  const selectFirstLink = tid => { toPatch(); let i = Patch.list.findIndex(p => p.from === tid && (p.links || []).length); if (i < 0) { fromTemplate(tid); i = Patch.cur; } Patch.cur = i; const P = Patch.P; Patch.sel = null; Patch.selLink = P.links[0].id; Patch.view(); renderTrail(); openPanel('right'); };
+  const LESSONS = {
+    vfolder: { name: 'Make a virtual folder', steps: [
+      { t: 'Pick files: shift-click (or ⌘/Ctrl-click) them on the rings, in the list (L) or in the Field. Each picked file gets a small red-orange square.', do: ['Pick four for me', () => { if (S.mode === 'patch') setView('rings'); pickMany(newestOf('ai', 4)); }] },
+      { t: 'A bar appears at the bottom of the screen. Type a name into it — for example "Board candidates".', hl: '#pickbar', do: ['Type the name', () => { if (!S.multi.size) pickMany(newestOf('ai', 4)); const b = $('#pickbar'); b._name = 'Board candidates'; renderPickbar(); flash('#pick-name'); }] },
+      { t: 'Press Make virtual folder. It opens as a lens, and it is listed under Virtual folders in this panel.', hl: '#pickbar .solid' },
+      { t: 'Rename or remove it here later. A virtual folder is a list of files and, if you like, a rule (a search). Nothing is copied or moved on disk.', do: ['Show virtual folders', () => { if (S.mode === 'patch') setView('rings'); openPanel('left', 'groups'); flash('#sec-groups'); }] },
+      { t: 'Another way: type a search, then press Enter or + Lens — the search becomes a lens. Save a lens from the right panel and it becomes a virtual folder with a rule.', hl: '#search' },
+    ] },
+    links: { name: 'Bring files in and link them', steps: [
+      { t: 'Drag files from Finder or Explorer onto the page, or press Bring files… in the right panel. With the bridge they are copied into the folder you are zoomed into — nothing is overwritten.' },
+      { t: 'The new files arrive already picked, so you can name them as a virtual folder straight away.', hl: '#pickbar' },
+      { t: 'To link files, pick them and press Link them in the bar. More than 24: each is linked to the first one picked.', do: ['Pick four for me', () => { if (S.mode === 'patch') setView('rings'); pickMany(newestOf('ai', 4)); flash('#pickbar'); }] },
+      { t: 'Links show at once in the Graph (2) and when a file is selected. With the bridge they are written into each file\'s sidecar note, so Obsidian sees them too.', do: ['Open the Graph', () => setView('graph')] },
+    ] },
+    wire: { name: 'Wire files into a tool', steps: [
+      { t: 'The patch room (3) wires material into tools, gates, agents and notes. Open it.', do: ['Open the patch room', () => setView('patch')] },
+      { t: 'Add a file: library → Material → Find a file. Or select a file anywhere and press P.', hl: '#lib-q' },
+      { t: 'Add a tool from SYSTEM 8 tools. Drag from the solid square on the right of the file to the pale square on the left of the tool. Inputs that fit light up; the others say why not.' },
+      { t: 'A gate stops everything after it until you press Accept. Agents propose, you commit. Press Run to follow the wires.' },
+      { t: 'See it done in a template.', do: ['Open · Moodboard → note', () => fromTemplate('board')] },
+    ] },
+    live: { name: 'Link tools live', steps: [
+      { t: 'A live link carries one number, 0–1, every frame. A file wire carries files once, on Run. The two never share a line.' },
+      { t: 'Add a source from Live · signals and tools: Sliders · 8, Local · time and pointer, or MIDI. Add a target: a tool that has joined — here Ring · example.', do: ['Show the live library', () => { toPatch(); openPanel('left', 'live'); flash('#sec-live'); }] },
+      { t: 'Drag from the small bar on the right of a source row to the bar on the left of a parameter row. The right panel opens with the new link.' },
+      { t: 'Move a slider — the ring follows. Every parameter is also a source: a tool can drive another tool.', do: ['Open · Desk · eight sliders', () => fromTemplate('desk')] },
+    ] },
+    shape: { name: 'Shape a link', steps: [
+      { t: 'Click a link line. The right panel shows two meters: the signal in, and after mapping.', do: ['Select a link for me', () => selectFirstLink('pad')] },
+      { t: 'In from / to: which part of the signal is used. Out from / to: where it lands inside the parameter\'s own min and max.' },
+      { t: 'Curve: ease is slow at both ends, exp gives room at the bottom, log at the top. Smoothing makes it late and soft. Quantize gives it steps. Invert turns it around.' },
+      { t: 'Uncheck On to mute it without losing it; Delete removes it. When a source goes quiet — controller unplugged, tool closed — the tool keeps its own value.' },
+    ] },
+    ai: { name: 'Feed an AI · prompt + references', steps: [
+      { t: 'An AI node has two main inputs: the prompt (text) on the first, the references (images, or a couple of videos) on the second.', do: ['Open · Prompt + references → AI', () => fromTemplate('ai')] },
+      { t: 'The prompt is a Prompt · text node, or any note from your archive wired into the same input — several are joined.' },
+      { t: 'The references are a File set: one node that holds many files. Shift-click the images anywhere, come back, and press Use picked on the set. Or choose a virtual folder: the set then follows it.', do: ['Show the flow library', () => { toPatch(); openPanel('left', 'flow'); flash('#sec-flow'); }] },
+      { t: 'Choose the engine on the AI node. With a command set in config.json it runs by itself. Without one, Run copies the prompt, gathers the references in one folder (as links, nothing copied) and opens the engine — you paste and drop.' },
+      { t: 'The same File set feeds PNG sequence → video, and Send to Resolume or DaVinci Resolve.', do: ['Open · PNG sequence → video → Resolume', () => fromTemplate('pngseq')] },
+    ] },
+    mat3d: { name: '3D object with a material group', steps: [
+      { t: 'A Material group collects up to seven maps in one node: texture, bump, light, reflection, normal, displacement, transparency. Wire only the ones you have; each input takes one image.', do: ['Open · 3D object + material group → Blender', () => fromTemplate('mat3d')] },
+      { t: 'Wire the 3D file into object and the group into material on 3D import · Blender.' },
+      { t: 'Run opens Blender, imports the object and builds one material: reflection is read as bright = mirror-like, transparency as white = solid.' },
+    ] },
+    midi: { name: 'Play with a MIDI controller', steps: [
+      { t: 'Add MIDI · controller from the library, or open the template.', do: ['Open · MIDI knobs · CC 1–4', () => fromTemplate('midi')] },
+      { t: 'Press Connect on the node. The browser asks once for MIDI access (Chrome and Edge; Safari has no Web MIDI).' },
+      { t: 'Press Learn, then move a knob: a new row appears for that CC. Link it like any other source.' },
+    ] },
+    join: { name: 'Make your own tool join', steps: [
+      { t: 'A tool joins once: it loads s8link.js and declares its settings as a table of named numbers — min, max, default. Scalars only; a colour is three parameters.' },
+      { t: 'Use the tool id from config.json, so the tool in the orbit, its file node and its live node are one tool.' },
+      { t: 'Link check (right panel, nothing selected) lists every SYSTEM 8 tool: joined and following the contract, joined with problems (each named), or not loading s8link.js yet. Probe opens a tool and waits for it to say hello.', do: ['Open the link check', () => { toPatch(); Patch.sel = null; Patch.selLink = null; Patch.view(); openPanel('right', 'linkcheck'); flash('#sec-linkcheck'); }] },
+      { t: 'Without the bridge the tool runs exactly as before. The README has the full snippet and a working example tool.' },
+    ] },
+    lens: { name: 'Lenses · split the circle', steps: [
+      { t: 'Shift-click a ring, or a project or folder name, to open it as a lens. Up to four lenses split the circle into halves, thirds or quarters.', do: ['Open the rings', () => setView('rings')] },
+      { t: 'Each slice zooms on its own: scroll over it. Click a slice to make it the active one.' },
+      { t: 'A search becomes a lens with Enter or + Lens. Close lenses from the right panel.', hl: '#search' },
+    ] },
+    flags: { name: 'Triangles · what needs you', steps: [
+      { t: 'A red-orange triangle by a project name means it needs you. It rotates when an agent waits for you, zooms slightly when something failed, and blinks when a deadline is near.', do: ['Open the rings', () => setView('rings')] },
+      { t: 'Deadlines come from a note\'s frontmatter — the lines between --- at its top, e.g. deadline: 2026-12-01 — or from the right panel when a project is in focus. They are marked on the year grid (4).' },
+      { t: 'The right panel lists everything that needs you under Needs you.', do: ['Show what needs me', () => openPanel('right', 'needs')] },
+    ] },
+  };
+  const LESSON_ORDER = ['vfolder', 'links', 'wire', 'ai', 'mat3d', 'live', 'shape', 'midi', 'join', 'lens', 'flags'];
+  function helpCtx() {
+    const n = S.multi.size;
+    if (n) return { key: 'picks' + n, where: 'Picked files', title: fmt(n) + (n === 1 ? ' file picked' : ' files picked'), text: 'The bar at the bottom works on what you picked.', steps: ['Type a name → Make virtual folder.', 'Add to… puts them into an existing virtual folder.', 'Link them links each to each. Esc clears the picks.'], lesson: 'vfolder' };
+    if (S.mode === 'patch') {
+      const P = Patch.P;
+      if (Patch.selLink) return { key: 'link', where: 'Patch · live link', title: 'A live link', text: 'One number, 0–1, every frame. The link owns the mapping; the parameter owns its min, max and default.', steps: ['Shape it in the right panel: range, curve, smoothing, quantize, invert.', 'Uncheck On to mute it.', 'Delete removes it.'], lesson: 'shape' };
+      const nd = P && P.nodes.find(x => x.id === Patch.sel);
+      if (nd) {
+        if (nd.type === 'set') return { key: 'n-set', where: 'Patch · file set', title: 'A file set', text: 'Many files down one wire: references for an AI, frames for a video, clips for Resolume.', steps: ['Shift-click files anywhere, then press Use picked.', 'Or choose a virtual folder — the set follows it.'], lesson: 'ai' };
+        if (nd.type === 'text') return { key: 'n-text', where: 'Patch · prompt', title: 'A prompt', text: 'Text you write here. Wire it into the first input of an AI node; a note from the archive can go into the same input.', steps: [], lesson: 'ai' };
+        if (nd.type === 'ai') return { key: 'n-ai', where: 'Patch · AI', title: 'An AI engine', text: 'Prompt on the first input, references on the second, video on the third. Local or cloud is only a choice of engine.', steps: ['With a command in config.json → engines it runs by itself.', 'Without one, Run copies the prompt, shows the references in one folder and opens the engine.'], lesson: 'ai' };
+        if (nd.type === 'seq') return { key: 'n-seq', where: 'Patch · sequence', title: 'PNG sequence → video', text: 'Stills in name order become one MP4 beside the first frame. Needs ffmpeg on the computer that runs the bridge.', steps: ['Feed it a File set.', 'Set frames per second on the node.'], lesson: 'ai' };
+        if (nd.type === 'mat') return { key: 'n-matg', where: 'Patch · material group', title: 'A material group', text: 'Seven named map inputs, one material out. Each input takes one image.', steps: ['Wire it into material on 3D import · Blender.'], lesson: 'mat3d' };
+        if (nd.type === 'import3d') return { key: 'n-imp', where: 'Patch · 3D import', title: '3D import · Blender', text: 'Takes one 3D file and one material group. Run opens Blender, imports and builds the material.', steps: [], lesson: 'mat3d' };
+        if (nd.type === 'send') return { key: 'n-send', where: 'Patch · bridge', title: 'Send to another program', text: 'Resolume Arena or Avenue: each file into the next clip of a layer (turn on Preferences › Webserver). DaVinci Resolve: into the media pool (Studio, external scripting on). Wire: opens with the first file.', steps: [], lesson: 'ai' };
+        if (nd.type === 'material') return { key: 'n-mat', where: 'Patch · file', title: 'A file', text: 'Its colour is its kind. It gives itself to whatever it is wired into.', steps: ['Drag from its solid square (right) to a pale input of a tool, gate or note.', 'View opens it; Show in rings finds it in the archive.'], lesson: 'wire' };
+        if (nd.type === 'tool') return { key: 'n-tool', where: 'Patch · tool', title: 'A tool', text: 'It takes the file kinds on its left. Run opens it with the files wired in.', steps: ['Its result comes back as material when you save it into the project folder.', 'To control its settings live, add it from Live · signals and tools once it has joined.'], lesson: 'wire' };
+        if (nd.type === 'gate') return { key: 'n-gate', where: 'Patch · gate', title: 'A gate', text: 'Nothing after it runs until you press Accept. Agents propose, you commit.', steps: ['Accept in the right panel, then Run again.'], lesson: 'wire' };
+        if (nd.type === 'task') return { key: 'n-task', where: 'Patch · agent', title: 'An agent or task', text: 'It runs with the wired files as {input}. When it stops and asks for you, its project triangle rotates.', steps: ['Its log is in the right panel under Run.'], lesson: 'flags' };
+        if (nd.type === 'note') return { key: 'n-note', where: 'Patch · note', title: 'Collect → note', text: 'Writes one note into your vault that links everything wired into it. After a reindex the links show in the Graph.', steps: [], lesson: 'wire' };
+        if (nd.type === 'midi') return { key: 'n-midi', where: 'Patch · MIDI', title: 'A MIDI controller', text: 'Each row gives one number, 0–1: last note, velocity, gate, pitch bend and every CC you learn.', steps: ['Connect, then Learn and move a knob.', 'Drag from a row\'s right bar to a parameter.'], lesson: 'midi' };
+        if (nd.type === 'local' || nd.type === 'sliders') return { key: 'n-src', where: 'Patch · signals', title: nd.type === 'local' ? 'Time and pointer' : 'Eight sliders', text: 'Each row gives one number, 0–1, every frame.', steps: ['Drag from the bar on the right of a row to the bar on the left of a parameter.'], lesson: 'live' };
+        if (nd.type === 'live') { const tb = Live.table(nd.tool); if (!tb) return { key: 'n-nojoin', where: 'Patch · live tool', title: 'Not joined yet', text: 'This tool has not said hello to the hub, so its settings are unknown.', steps: ['Open the tool, or press Probe.', 'If it never joins, it does not load s8link.js yet.'], lesson: 'join' };
+          return { key: 'n-live', where: 'Patch · live tool', title: Patch.title(nd), text: 'Bars on the left of a row are parameters: they take one link. Bars on the right are sources: every parameter and signal can drive something else.', steps: ['Drag into a left bar to control it; from a right bar to use it.'], lesson: 'live' }; }
+      }
+      if (!P || !P.nodes.length) return { key: 'p-empty', where: 'Patch', title: 'An empty patch', text: 'Start from a template below, or add files, tools and signals from the library.', steps: [], lesson: 'wire' };
+      return { key: 'p', where: 'Patch', title: 'The patch room', text: 'Two kinds of connection that never mix: file wires (files, once, on Run) and live links (one number, every frame).', steps: ['Templates are in the library below.', 'Select a node or a link to see what it does.'], lesson: (P.links || []).length ? 'live' : 'wire' };
+    }
+    if (S.mode === 'graph') return { key: 'graph', where: 'Graph', title: 'The graph', text: 'The same rings, with the links between files drawn inside them, bundled.', steps: ['Links come from notes, from Link them, and from collection notes.', 'Click a file to see what it links to.'], lesson: 'links' };
+    if (S.mode === 'year') return { key: 'year', where: 'Year', title: 'The year grid', text: '4 quarters × 3 months × 4 weeks, plus one free week per quarter. Deadlines are marked on it.', steps: ['Click a week to see it in the Field.'], lesson: 'flags' };
+    if (S.mode === 'field') return { key: 'field', where: 'Field', title: 'The field', text: 'Everything, or every search hit, newest first.', steps: ['Shift-click to pick files.', 'Enter opens the selection.'], lesson: 'vfolder' };
+    if (S.lenses.length) return { key: 'lens' + S.lenses.length, where: 'Rings · lenses', title: S.lenses.length + (S.lenses.length === 1 ? ' lens' : ' lenses'), text: 'Each slice zooms on its own. Click a slice to make it active.', steps: ['Shift-click another ring or name for one more (up to four).', 'Save a lens as a virtual folder from the right panel.'], lesson: 'lens' };
+    return { key: 'rings', where: 'Rings', title: 'The rings', text: 'One grammar at every level: sectors, projects, folders, files. Newest material sits at the outer edge. Circles are text, squares are material.', steps: ['Scroll over a ring to zoom into it; scroll out to go up.', 'Click a name in the outer ring to open the project; its square opens the tool.', 'Shift-click a ring or a name to open it as a lens.'], lesson: 'vfolder' };
+  }
+  function helpPill() {
+    const b = el('button', 'hpill lab' + (Help.on ? ' on' : ''), Help.on ? 'Help on' : 'Help off');
+    b.setAttribute('aria-pressed', String(Help.on)); b.title = 'Show or hide the help in this panel';
+    b.onclick = () => { Help.on = !Help.on; keep.set('help', Help.on); renderLeft(); };
+    return b;
+  }
+  function leftHead(title) { const h = panelHead(title, 'left'); h.insertBefore(helpPill(), h.lastChild); return h; }
+  function helpSection() { const s = sec('Help', 'help'); const b = el('div', 'helpb'); b.id = 'help-body'; s.appendChild(b); fillHelp(b); return s; }
+  function fillHelp(b) {
+    b.textContent = '';
+    const c = helpCtx(); Help.key = c.key + '|' + (Help.lesson || '') + '|' + Help.step;
+    if (Help.lesson) {
+      const L = LESSONS[Help.lesson], st = L.steps[Help.step];
+      const top = el('div', 'hnav'); const back = el('button', 'lab', '‹ All lessons'); back.onclick = () => { Help.lesson = null; fillHelp(b); }; top.append(back, el('span', 'lab dim', (Help.step + 1) + ' / ' + L.steps.length)); b.appendChild(top);
+      const card = el('div', 'hctx'); card.append(el('span', 'lab dim', 'Lesson'), el('div', 'htitle', L.name), el('p', 'htext', st.t));
+      if (st.do) { const d = el('button', 'btn cl solid', st.do[0]); d.onclick = () => { st.do[1](); }; card.appendChild(d); }
+      b.appendChild(card);
+      const nav = el('div', 'hnav'); const pv = el('button', 'btn cl', '‹ Back'), nx = el('button', 'btn cl', Help.step < L.steps.length - 1 ? 'Next ›' : 'Done');
+      pv.disabled = Help.step === 0; pv.onclick = () => { Help.step--; fillHelp(b); };
+      nx.onclick = () => { if (Help.step < L.steps.length - 1) { Help.step++; fillHelp(b); } else { Help.lesson = null; fillHelp(b); } };
+      nav.append(pv, nx); b.appendChild(nav);
+      const dots = el('div', 'hdots'); L.steps.forEach((x, k) => { const d = el('button', 'hdot' + (k === Help.step ? ' on' : '')); d.setAttribute('aria-label', 'Step ' + (k + 1)); d.onclick = () => { Help.step = k; fillHelp(b); }; dots.appendChild(d); }); b.appendChild(dots);
+      if (st.hl) setTimeout(() => flash(st.hl), 60);
+      return;
+    }
+    const card = el('div', 'hctx'); card.append(el('span', 'lab dim', 'Now · ' + c.where), el('div', 'htitle', c.title), el('p', 'htext', c.text));
+    if (c.steps.length) { const ol = el('ol', 'hsteps'); c.steps.forEach(t => ol.appendChild(el('li', null, t))); card.appendChild(ol); }
+    b.appendChild(card);
+    b.appendChild(el('span', 'lab dim hlh', 'Lessons'));
+    LESSON_ORDER.forEach(id => { const L = LESSONS[id], r = el('button', 'row hrow' + (id === c.lesson ? ' sug' : ''));
+      r.append(el('span', 'grow', L.name), el('span', 'r lab', id === c.lesson ? 'for this' : L.steps.length + ' steps'));
+      r.onclick = () => { Help.lesson = id; Help.step = 0; fillHelp(b); }; b.appendChild(r); });
+  }
+  setInterval(() => {
+    if (!S.left || !Help.on) return; const b = document.getElementById('help-body'); if (!b || b.contains(document.activeElement)) return;
+    const c = helpCtx(); if (c.key + '|' + (Help.lesson || '') + '|' + Help.step !== Help.key) fillHelp(b);
+  }, 300);
   function renderLeft() {
     if (S.mode === 'patch') return renderLibrary();
     const P = $('#pL'); P.textContent = '';
-    P.appendChild(panelHead('System', 'left'));
+    P.appendChild(leftHead('System'));
+    if (Help.on) P.appendChild(helpSection());
     const a = sec('Archive');
     if (S.live) {
       const kv = el('div', 'kv');
@@ -2045,15 +2678,17 @@
       r.append(sw, el('span', 'grow', KLAB[kn]), el('span', 'r', fmt(D.kindCount[k]))); r.onclick = () => toggleKind(k); kd.appendChild(r);
     });
     P.appendChild(kd);
-    const gs = sec('Groups · virtual', 'groups', S.groups.length);
+    const gs = sec('Virtual folders', 'groups', S.groups.length);
     S.groups.forEach(g => {
       const r = el('div', 'row'), b = el('button', 'grow'); b.style.textAlign = 'left'; b.style.minHeight = '32px';
+      const rn = el('button', 'lab', 'Rename'); rn.style.cssText = 'height:32px;padding:0 6px;color:var(--d)';
+      rn.onclick = () => { const inp = el('input', 'fld'); inp.value = g.name; inp.setAttribute('aria-label', 'New name for ' + g.name); inp.style.margin = '0'; r.replaceChildren(inp); inp.focus(); inp.select(); const done = ok => { if (ok) renameGroup(g, inp.value); else renderLeft(); }; inp.onkeydown = e => { e.stopPropagation(); if (e.key === 'Enter') done(true); if (e.key === 'Escape') done(false); }; inp.onblur = () => done(true); };
       b.append(el('span', null, g.name), el('span', 'lab dim', '  ' + (g.rule ? 'rule' + (g.items && g.items.length ? ' + ' + g.items.length : '') : fmt((g.items || []).length) + ' files')));
       b.title = (g.rule || 'Picked files') + (g.missing ? ' · ' + g.missing + ' files no longer found' : ''); b.onclick = () => { setPanel('left', false); openGroup(g); };
       const x = el('button', 'lab', '×'); x.style.cssText = 'height:32px;padding:0 4px;color:var(--d)'; x.setAttribute('aria-label', 'Remove group ' + g.name); x.onclick = () => deleteGroup(g);
-      r.append(b, x); gs.appendChild(r);
+      r.append(b, rn, x); gs.appendChild(r);
     });
-    if (!S.groups.length) gs.appendChild(el('p', 'note', 'Save a lens to keep it as a group. Groups are virtual folders: a rule, files you picked, or both. Nothing is copied or moved on disk.'));
+    gs.appendChild(el('p', 'note', S.groups.length ? 'Click one to open it as a lens. A virtual folder holds a rule, files you picked, or both — nothing is copied or moved on disk.' : 'Shift-click files to pick them, then name them as a virtual folder in the bar at the bottom. Or save a lens. Nothing is copied or moved on disk.'));
     P.appendChild(gs);
     const sc = sec('Sectors', null, (Rings.tree.nodes[0].kids || []).length);
     (Rings.tree.nodes[0].kids || []).forEach(id => { const nd = Rings.tree.nodes[id]; const r = el('button', 'row'); r.append(el('span', 'grow', nd.label), el('span', 'r', fmt(nd.n))); r.onclick = () => { setPanel('left', false); focusAll(id); }; sc.appendChild(r); });
@@ -2073,14 +2708,16 @@
       .forEach(([k, v]) => { const r = el('div', 'row'); const kb = el('kbd', 'lab', k); kb.style.minWidth = '64px'; r.append(kb, el('span', 'grow dim', v)); ks.appendChild(r); });
     P.appendChild(ks);
     const ab = sec('About');
-    ab.appendChild(el('p', 'note', 'SYSTEM 8 · Control room · build 1.3 — one radial grammar at every level, lenses that split the circle, the graph on the same rings, and the patch room.'));
+    ab.appendChild(el('p', 'note', 'SYSTEM 8 · Control room · build 1.6 — one radial grammar at every level, lenses that split the circle, the graph on the same rings, and the patch room.'));
     if (S.live && S.status) ab.appendChild(el('p', 'note', 'Config: ' + S.status.config));
     P.appendChild(ab);
   }
   function renderLibrary() {
     const P = $('#pL'), y = P.scrollTop; P.textContent = '';
-    P.appendChild(panelHead('Node library', 'left'));
+    P.appendChild(leftHead('Node library'));
+    if (Help.on) P.appendChild(helpSection());
     const add = spec => Patch.add(spec);
+    P.appendChild(templateSection());
     const s0 = sec('Material');
     if (S.sel >= 0) { const r = el('button', 'row'); const sw = el('span', 'sw' + shp(D.k[S.sel])); sw.style.background = C.k[D.k[S.sel]]; r.append(sw, el('span', 'grow', titleOf(S.sel)), el('span', 'r lab', 'selection')); r.onclick = () => Patch.addMaterial(S.sel); s0.appendChild(r); }
     const inp = el('input', 'fld'); inp.id = 'lib-q'; inp.placeholder = 'Find a file to add'; inp.setAttribute('aria-label', 'Find a file to add'); s0.appendChild(inp);
@@ -2099,17 +2736,171 @@
       P.appendChild(s);
     });
     const s3 = sec('Agents and tasks', null, S.tasks.length);
-    S.tasks.forEach(t => { const r = el('button', 'row'); r.append(el('span', 'grow', t.name), el('span', 'r lab', t.machine ? t.machine.toUpperCase() : 'any')); r.onclick = () => add({ type: 'task', task: t.id }); s3.appendChild(r); });
+    S.tasks.filter(t => !t.job).forEach(t => { const r = el('button', 'row'); r.append(el('span', 'grow', t.name), el('span', 'r lab', t.machine ? t.machine.toUpperCase() : 'any')); r.onclick = () => add({ type: 'task', task: t.id }); s3.appendChild(r); });
     P.appendChild(s3);
     const s4 = sec('Logic and output');
     const g1 = el('button', 'row'); g1.append(el('span', 'grow', 'Gate · you decide'), el('span', 'r lab', 'any → any')); g1.onclick = () => add({ type: 'gate', label: 'Gate · you decide' }); s4.appendChild(g1);
     const g2 = el('button', 'row'); g2.append(el('span', 'grow', 'Collect → note'), el('span', 'r lab', 'any → text')); g2.onclick = () => add({ type: 'note', title: 'New collection' }); s4.appendChild(g2);
     P.appendChild(s4);
+    const sf = sec('Flow · sets, AI, 3D, bridges', 'flow');
+    const frow = (name, tag, spec) => { const r = el('button', 'row'); r.append(el('span', 'grow', name), el('span', 'r lab', tag)); r.onclick = () => { const nd = add(spec); if (spec.type === 'set' && S.multi.size) { Flow.fill(nd, S.multi); Patch.persist(); Patch.view(); } }; sf.appendChild(r); };
+    frow('File set · many images or videos', S.multi.size ? 'takes the ' + S.multi.size + ' picked' : '→ files', { type: 'set', items: [] });
+    frow('Prompt · text', '→ text', { type: 'text', text: '' });
+    engines().forEach(e => frow(e.name, 'text + files → ' + (e.gives || 'image'), { type: 'ai', engine: e.id }));
+    frow('PNG sequence → video', 'images → video', { type: 'seq', fps: 25 });
+    frow('Material group · 7 maps', 'images → material', { type: 'mat' });
+    frow('3D import · Blender', '3D + material', { type: 'import3d' });
+    SEND_TARGETS.forEach(([id, n]) => frow('Send to · ' + n, 'video image', { type: 'send', target: id, layer: 1, column: 1 }));
+    sf.appendChild(el('p', 'note', 'A set carries many files down one wire. An AI node takes a prompt on its first input and references on the second.'));
+    P.appendChild(sf);
+    const sl = sec('Live · signals and tools', 'live');
+    const lrow = (name, tag, fn) => { const r = el('button', 'row'); r.append(el('span', 'grow', name), el('span', 'r lab', tag)); r.onclick = fn; sl.appendChild(r); };
+    lrow('Local · time and pointer', 'signals', () => add({ type: 'local' }));
+    lrow('Sliders · 8', 'signals', () => add({ type: 'sliders', vals: [0, 0, 0, 0, 0, 0, 0, 0] }));
+    lrow('MIDI · controller', 'signals', () => add({ type: 'midi', ccs: [] }));
+    const onPatch = id => (Patch.P ? Patch.P.nodes.some(n => n.type === 'live' && n.tool === id) : false);
+    const addLive = (id, src) => { if (onPatch(id)) return toast('Already on this patch — a tool joins once'); add({ type: 'live', tool: id, src }); };
+    Object.entries(MOUNTED).forEach(([id, d]) => lrow(d.name, 'mounted', () => addLive(id, 'mount')));
+    const ids = new Set();
+    for (const t of Live.tools.values()) if (t.via === 'net') { ids.add(t.tool); lrow(t.name, t.joined ? 'joined' : 'left', () => addLive(t.tool, 'net')); }
+    S.tools.filter(t => t.group === 'system8' && !ids.has(t.id)).forEach(t => lrow(t.name, 'not joined', () => addLive(t.id, 'net')));
+    sl.appendChild(el('p', 'note', 'Drag from a small bar on the right of a row (a signal) to a bar on the left (a parameter). A link is one mapping: range, curve, smoothing, quantize, invert. Files and numbers never share a wire.'));
+    P.appendChild(sl);
     const s5 = sec('How wires work');
     s5.appendChild(el('p', 'note', 'Drag from a solid output (right side) to a pale input (left side). Inputs that fit light up; the others stay grey and say why if you try. Colours are the file kinds: image, video, audio, 3D, text. Circles are text, squares are material.'));
     s5.appendChild(el('p', 'note', 'Run follows the wires: material opens in tools, gates stop everything after them until you accept, tasks run with the file as {input}, notes write links into your vault.'));
     P.appendChild(s5);
     P.scrollTop = y;
+  }
+  // ───────────────────────────────────────── picking several files (shift- or cmd-click)
+  function togglePick(i, tile) {
+    if (S.multi.has(i)) S.multi.delete(i); else S.multi.add(i);
+    if (tile) tile.classList.toggle('picked', S.multi.has(i));
+    S.sel = i; invalidate(); renderPickbar(); if (S.right) renderRight();
+  }
+  function pickMany(items) { for (const i of items) S.multi.add(i); invalidate(); renderPickbar(); if (S.right) renderRight(); document.querySelectorAll('.tile').forEach(t => t.classList.toggle('picked', S.multi.has(+t.dataset.i))); }
+  function clearPicks() { S.multi.clear(); invalidate(); renderPickbar(); if (S.right) renderRight(); document.querySelectorAll('.tile.picked').forEach(t => t.classList.remove('picked')); }
+  // the bar that appears while files are picked: name them as a virtual folder, add them to one, link them
+  function renderPickbar() {
+    const bar = $('#pickbar'); if (!bar) return;
+    const n = S.multi.size; bar.hidden = !n; if (!n) { bar.textContent = ''; return; }
+    const hadFocus = document.activeElement && document.activeElement.id === 'pick-name';
+    bar.textContent = '';
+    const keepName = bar._name || '';
+    bar.appendChild(el('span', 'pn-n lab', fmt(n) + (n === 1 ? ' file picked' : ' files picked')));
+    const nm = el('input', 'fld'); nm.id = 'pick-name'; nm.placeholder = 'Name a virtual folder'; nm.value = keepName; nm.setAttribute('aria-label', 'Name for the new virtual folder');
+    nm.oninput = () => { bar._name = nm.value; };
+    const mk = el('button', 'lab solid', 'Make virtual folder'); mk.onclick = () => groupFromPicks(nm.value);
+    nm.onkeydown = e => { e.stopPropagation(); if (e.key === 'Enter') groupFromPicks(nm.value); if (e.key === 'Escape') nm.blur(); };
+    bar.append(nm, mk);
+    if (hadFocus) setTimeout(() => { nm.focus(); nm.setSelectionRange(nm.value.length, nm.value.length); }, 0);
+    if (S.groups.length) {
+      const sel = el('select', 'fld'); sel.setAttribute('aria-label', 'Add to a virtual folder');
+      sel.appendChild(new Option('Add to…', ''));
+      S.groups.forEach(g => sel.appendChild(new Option(g.name, g.id)));
+      sel.onchange = () => { const g = S.groups.find(x => x.id === sel.value); if (g) addToGroup(g, [...S.multi]); sel.value = ''; };
+      bar.appendChild(sel);
+    }
+    const L = S.lenses[S.activeLens];
+    if (L && L.gid) { const g = S.groups.find(x => x.id === L.gid); if (g && [...S.multi].some(i => (g.items || []).includes(i))) { const rm = el('button', 'lab', 'Remove from ' + g.name); rm.onclick = () => removeFromGroup(g, [...S.multi]); bar.appendChild(rm); } }
+    if (n >= 2) { const lk = el('button', 'lab', 'Link them'); lk.title = 'Each picked file links to the others (more than 24: all to the first one picked)'; lk.onclick = () => linkPicks(false); bar.appendChild(lk); }
+    if (n >= 2 && pickedLinked()) { const ul = el('button', 'lab', 'Unlink'); ul.onclick = () => linkPicks(true); bar.appendChild(ul); }
+    const cl = el('button', 'lab', 'Clear'); cl.title = 'Esc'; cl.onclick = clearPicks; bar.appendChild(cl);
+  }
+  function pickedLinked() { const a = [...S.multi]; if (!D.ulinks) return false; for (const i of a) { const u = D.ulinks.get(i); if (u && a.some(j => u.has(j))) return true; } return false; }
+  async function saveGroupObj(g, quiet) {
+    if (S.live) { const r = await API.post('/api/group', g); if (!r.ok) { toast(r.error || 'Could not save'); return false; } g.id = r.id; if (!quiet) toast('Saved · ' + g.name + ' · a note in your vault lists it'); }
+    else if (!quiet) toast('Saved · ' + g.name + ' · kept in this browser (sample data)');
+    const k = S.groups.findIndex(x => x.id === g.id); if (k >= 0) S.groups[k] = g; else S.groups.push(g);
+    if (!S.live) keep.set('groups', S.groups);
+    if (S.left) renderLeft(); renderLegend(); renderPickbar(); return true;
+  }
+  async function groupFromPicks(name) {
+    const items = [...S.multi]; if (!items.length) return;
+    name = String(name || '').trim() || 'Virtual folder ' + (S.groups.length + 1);
+    const g = { id: 'g' + Date.now().toString(36), name, rule: '', items };
+    if (!(await saveGroupObj(g))) return;
+    const bar = $('#pickbar'); if (bar) bar._name = '';
+    clearPicks(); openGroup(g);
+  }
+  async function addToGroup(g, items) {
+    const before = (g.items || []).length; g.items = [...new Set([...(g.items || []), ...items])];
+    if (!(await saveGroupObj(g, true))) return;
+    toast('Added ' + (g.items.length - before) + ' to ' + g.name);
+    for (const L of S.lenses) if (L.gid === g.id) { if (L.items) L.items = Int32Array.from(new Set([...L.items, ...items])); else items.forEach(i => L.add.add(i)); buildLens(L); }
+    layoutLenses(); invalidate(); if (S.right) renderRight();
+  }
+  async function removeFromGroup(g, items) {
+    const out = new Set(items); g.items = (g.items || []).filter(i => !out.has(i));
+    if (!(await saveGroupObj(g, true))) return;
+    toast('Removed from ' + g.name + ' · the files themselves stay where they are');
+    for (const L of S.lenses) if (L.gid === g.id) { if (L.items) L.items = L.items.filter(i => !out.has(i)); items.forEach(i => L.add.delete(i)); buildLens(L); }
+    layoutLenses(); clearPicks();
+  }
+  async function renameGroup(g, name) {
+    name = String(name || '').trim(); if (!name || name === g.name) return;
+    g.name = name; await saveGroupObj(g, true); toast('Renamed · ' + name);
+    for (const L of S.lenses) if (L.gid === g.id) L.title = name;
+    renderTrail(); invalidate();
+  }
+  // links made by hand: the bridge writes them into each file's sidecar note (Obsidian sees them) and .s8/links.json
+  async function loadLinks() {
+    const pairs = S.live ? await API.get('/api/links').then(r => r.links || []).catch(() => []) : keep.get('links', []);
+    D.ulinks = new Map(); D.ulinkPairs = pairs;
+    for (const [a, b] of pairs) { if (a == null || b == null || a >= D.N || b >= D.N) continue; (D.ulinks.get(a) || D.ulinks.set(a, new Set()).get(a)).add(b); (D.ulinks.get(b) || D.ulinks.set(b, new Set()).get(b)).add(a); }
+  }
+  async function linkPicks(remove) {
+    const items = [...S.multi]; if (items.length < 2) return;
+    if (S.live) { const r = await API.post('/api/link', { items, remove }); if (!r.ok) return toast(r.error || 'Could not link'); toast((remove ? 'Unlinked · ' : 'Linked · ') + r.pairs + (r.pairs === 1 ? ' link' : ' links') + (r.hub ? ' to the first file' : '') + ' · written into the sidecar notes'); }
+    const hub = items.length > 24, pairs = hub ? items.slice(1).map(j => [items[0], j]) : items.flatMap((a, k) => items.slice(k + 1).map(b => [a, b]));
+    const key = p => Math.min(p[0], p[1]) + ':' + Math.max(p[0], p[1]), have = new Map((D.ulinkPairs || []).map(p => [key(p), p]));
+    for (const p of pairs) { if (remove) have.delete(key(p)); else have.set(key(p), p); }
+    const all = [...have.values()];
+    if (!S.live) { keep.set('links', all); toast((remove ? 'Unlinked · ' : 'Linked · ') + pairs.length + ' links · kept in this browser (sample data)'); }
+    D.ulinkPairs = all; D.ulinks = new Map(); for (const [a, b] of all) { (D.ulinks.get(a) || D.ulinks.set(a, new Set()).get(a)).add(b); (D.ulinks.get(b) || D.ulinks.set(b, new Set()).get(b)).add(a); }
+    D.back = null; buildGraphOnly(); invalidate(); renderPickbar(); if (S.right) renderRight();
+  }
+  function buildGraphOnly() {
+    const set = new Set(D.notes), edges = [], ek = new Set();
+    const addE = (i, j) => { set.add(i); set.add(j); const a = Math.min(i, j), b = Math.max(i, j), key = a * 4194304 + b; if (a !== b && !ek.has(key)) { ek.add(key); edges.push(a, b); } };
+    for (const i of D.notes) for (const j of linkedOf(i)) addE(i, j);
+    for (const [i, x] of D.x) if (x.sc >= 0) { set.add(i); set.add(x.sc); }
+    if (D.ulinks) for (const [i, js] of D.ulinks) for (const j of js) addE(i, j);
+    const f = Graph.focus, gt = buildTree(Int32Array.from([...set]), { name: 'Linked', leafMax: 40 }); gt.edges = edges; gt.edgeCount = edges.length / 2; Graph.set(gt); void f;
+  }
+  // ───────────────────────────────────────── bringing files in: drop them on the page, or pick them
+  function dropTarget() {
+    const v = RV(), w = v.tree ? nodeDir(v.tree, v.focus) : null;
+    if (w && D.roots[w.root] && D.roots[w.root].ok !== false) return w;
+    const ri = D.roots.findIndex(r => r.ok !== false); if (ri < 0) return null;
+    return { root: ri, rel: 'Inbox', label: D.roots[ri].name + '/Inbox', inbox: true };
+  }
+  async function bringFiles(files) {
+    files = [...files].filter(f => f && f.size >= 0 && f.name); if (!files.length) return;
+    const where = dropTarget(); if (!where) return toast('No folder to bring files into — check the roots in config.json');
+    if (!S.live) return toast('Sample data — with the bridge these ' + files.length + ' files would be copied into ' + where.label + ' and picked, ready to name as a virtual folder');
+    const got = [], L = S.lenses[S.activeLens], g = L && L.gid ? S.groups.find(x => x.id === L.gid) : null;
+    for (let k = 0; k < files.length; k++) {
+      const f = files[k]; toast('Bringing ' + (k + 1) + ' / ' + files.length + ' · ' + f.name);
+      try {
+        const r = await fetch('/api/import?root=' + where.root + '&rel=' + encodeURIComponent(where.rel) + '&name=' + encodeURIComponent(f.name), { method: 'POST', headers: { 'X-S8-Token': S.token, 'Content-Type': 'application/octet-stream' }, body: f }).then(x => x.json());
+        if (r.ok && r.i >= 0) got.push(r.i); else if (!r.ok) toast(r.error || 'Could not bring ' + f.name);
+      } catch (e) { toast('Could not bring ' + f.name + ': ' + e.message); }
+    }
+    await API.post('/api/import/done', {});
+    await reloadIndex(true);
+    if (g && got.length) await addToGroup(g, got);
+    clearPicks(); pickMany(got);
+    toast('Brought ' + got.length + ' of ' + files.length + ' into ' + where.label + (g ? ' · added to ' + g.name : '') + ' · they are picked: name them as a virtual folder or link them');
+  }
+  function bindPicks() {
+    const zone = $('#dropzone'); let depth = 0;
+    const isFiles = e => e.dataTransfer && [...e.dataTransfer.types].includes('Files');
+    window.addEventListener('dragenter', e => { if (!isFiles(e)) return; depth++; const w = dropTarget(); zone.querySelector('b').textContent = w ? w.label : '—'; zone.querySelector('span').textContent = w && w.inbox ? 'Inbox — zoom into one folder to bring them there instead' : 'the folder you are zoomed into'; zone.hidden = false; });
+    window.addEventListener('dragover', e => { if (isFiles(e)) e.preventDefault(); });
+    window.addEventListener('dragleave', e => { if (!isFiles(e)) return; depth = Math.max(0, depth - 1); if (!depth) zone.hidden = true; });
+    window.addEventListener('drop', e => { if (!isFiles(e)) return; e.preventDefault(); depth = 0; zone.hidden = true; bringFiles(e.dataTransfer.files); });
+    const fi = $('#bringfile'); fi.onchange = () => { bringFiles(fi.files); fi.value = ''; };
   }
   function toggleKindLens(k) {
     const q = 'kind:' + D.kinds[k], j = S.lenses.findIndex(Ln => Ln.q === q && !Ln.items);
@@ -2125,11 +2916,8 @@
     const items = L.items ? Array.from(lensItems(L)) : Array.from(L.add);
     if (items.length > 50000) return toast('Too many picked files to keep as a list — narrow the lens first');
     const g = { id: L.gid || 'g' + Date.now().toString(36), name: L.title, rule: L.items ? '' : L.q, items };
-    if (S.live) { const r = await API.post('/api/group', g); if (!r.ok) return toast(r.error || 'Could not save the group'); g.id = r.id; toast('Saved group · ' + g.name + ' · a note in your vault lists it'); }
-    else toast('Saved group · ' + g.name + ' · kept in this browser (sample data)');
-    L.gid = g.id; const k = S.groups.findIndex(x => x.id === g.id); if (k >= 0) S.groups[k] = g; else S.groups.push(g);
-    if (!S.live) keep.set('groups', S.groups);
-    renderLegend(); if (S.left) renderLeft(); if (S.right) renderRight();
+    if (!(await saveGroupObj(g))) return;
+    L.gid = g.id; if (S.right) renderRight();
   }
   function openGroup(g) {
     const items = g.items || [];
@@ -2184,6 +2972,13 @@
     const nd0 = needsSection(); if (nd0) P.appendChild(nd0);
     if (S.mode === 'rings' && S.lenses.length) P.appendChild(lensSection());
     if (S.mode === 'rings' || S.mode === 'list') P.appendChild(focusSection());
+    if (S.multi.size) {
+      const ps = sec('Picked', 'picked', S.multi.size), list = [...S.multi];
+      list.slice(0, 14).forEach(j => { const r = el('div', 'row'), b = el('button', 'grow'); b.style.cssText = 'text-align:left;display:flex;gap:10px;align-items:center;min-height:30px'; const sw = el('span', 'sw' + shp(D.k[j])); sw.style.background = C.k[D.k[j]]; b.append(sw, el('span', null, titleOf(j))); b.onclick = () => select(j); const x = el('button', 'lab', '×'); x.style.cssText = 'height:30px;padding:0 4px;color:var(--d)'; x.setAttribute('aria-label', 'Unpick ' + titleOf(j)); x.onclick = () => togglePick(j); r.append(b, x); ps.appendChild(r); });
+      if (list.length > 14) ps.appendChild(el('p', 'note', '+ ' + fmt(list.length - 14) + ' more'));
+      ps.appendChild(el('p', 'note', 'Name them as a virtual folder, add them to one or link them — in the bar at the bottom. Esc clears.'));
+      P.appendChild(ps);
+    }
     if (S.sel >= 0) P.appendChild(selectionSection(S.sel));
     const tl = sec('Tools', 'tools', S.tools.length);
     [['system8', 'SYSTEM 8'], ['apps', 'Programs']].forEach(([g, name]) => {
@@ -2207,6 +3002,9 @@
     P.appendChild(panelHead('Node', 'right'));
     const pt = Patch.P; if (!pt) return;
     const nd = pt.nodes.find(n => n.id === Patch.sel);
+    const lk = !nd && Patch.selLink ? (pt.links || []).find(m => m.id === Patch.selLink) : null;
+    if (lk) { P.appendChild(linkSection(pt, lk)); return; }
+    if (nd && LIVE_TYPES.has(nd.type)) { P.appendChild(liveNodeSection(pt, nd)); P.appendChild(linkCheckSection()); return; }
     if (!nd) {
       if (Patch.selWire >= 0 && pt.wires[Patch.selWire]) {
         const w = pt.wires[Patch.selWire], A = pt.nodes.find(n => n.id === w.a), B = pt.nodes.find(n => n.id === w.b);
@@ -2215,25 +3013,103 @@
       }
       const s = sec('Patch'); s.appendChild(el('div', 'selname', pt.name)); s.appendChild(el('p', 'note', pt.nodes.length + ' nodes · ' + pt.wires.length + ' wires. Select a node to see what it takes, what it gives and what you can do with it.'));
       const del = el('button', 'btn cl', 'Delete this patch'); del.onclick = () => { if (Patch.list.length <= 1) { pt.nodes = []; pt.wires = []; } else { Patch.list.splice(Patch.cur, 1); Patch.cur = 0; } Patch.persist(); Patch.view(); renderTrail(); }; s.appendChild(del);
-      P.appendChild(s); P.appendChild(runSection()); renderRun(); return;
+      P.appendChild(s); P.appendChild(linkCheckSection()); P.appendChild(runSection()); renderRun(); return;
     }
-    const s = sec(nd.type === 'material' ? 'Material' : nd.type === 'tool' ? 'Tool' : nd.type === 'task' ? 'Agent · task' : nd.type === 'gate' ? 'Gate' : 'Output');
+    const s = sec(FLOW_TYPES.has(nd.type) ? 'Flow node' : nd.type === 'material' ? 'Material' : nd.type === 'tool' ? 'Tool' : nd.type === 'task' ? 'Agent · task' : nd.type === 'gate' ? 'Gate' : 'Output');
     s.appendChild(el('div', 'selname', Patch.title(nd)));
     const ports = Patch.ports(nd), kv = el('div', 'kv');
-    kv.append(el('span', null, 'Takes'), el('span', null, ports.ins.join(', ') || '—'), el('span', null, 'Gives'), el('span', null, ports.outs.join(', ') || '—'), el('span', null, 'State'), el('span', null, Patch.states[nd.id] || 'not run'));
+    kv.append(el('span', null, 'Takes'), el('span', null, (ports.inl || ports.ins).join(', ') || '—'), el('span', null, 'Gives'), el('span', null, ports.outs.join(', ') || '—'), el('span', null, 'State'), el('span', null, Patch.states[nd.id] || 'not run'));
     if (nd.type === 'material') kv.append(el('span', null, 'Path'), el('span', null, pathOf(nd.i)));
     s.appendChild(kv);
     const ins = pt.wires.filter(w => w.b === nd.id).map(w => Patch.title(pt.nodes.find(n => n.id === w.a))), outs = pt.wires.filter(w => w.a === nd.id).map(w => Patch.title(pt.nodes.find(n => n.id === w.b)));
     if (ins.length) s.appendChild(el('p', 'note', 'From: ' + ins.join(', ')));
     if (outs.length) s.appendChild(el('p', 'note', 'To: ' + outs.join(', ')));
     const btns = el('div', 'btns'), mk = (lab, fn) => { const b = el('button', 'lab', lab); b.onclick = fn; btns.appendChild(b); };
-    mk(nd.type === 'material' ? 'View' : nd.type === 'tool' ? 'Open' : nd.type === 'task' ? 'Run' : nd.type === 'gate' ? (nd.accepted ? 'Hold' : 'Accept') : 'Write note', () => Patch.activate(nd));
+    if (!FLOW_TYPES.has(nd.type)) mk(nd.type === 'material' ? 'View' : nd.type === 'tool' ? 'Open' : nd.type === 'task' ? 'Run' : nd.type === 'gate' ? (nd.accepted ? 'Hold' : 'Accept') : 'Write note', () => Patch.activate(nd));
     if (nd.type === 'material') mk('Show in rings', () => locate(nd.i));
     mk('Duplicate', () => Patch.duplicate(nd.id));
     mk('Delete', () => Patch.remove(nd.id));
     s.appendChild(btns);
     P.appendChild(s);
     P.appendChild(runSection()); renderRun();
+  }
+  // the mapping of one link: what the Builder calls MAP
+  function linkSection(pt, m) {
+    const A = pt.nodes.find(n => n.id === m.a), B = pt.nodes.find(n => n.id === m.b), tb = Live.table(B.tool), d = tb && tb.params ? tb.params[m.bp] : null;
+    const s = sec('Link', 'link');
+    s.appendChild(el('div', 'selname', Patch.title(A) + ' · ' + m.ap + ' → ' + Patch.title(B) + ' · ' + m.bp));
+    const mt = (label, side) => { const r = el('div', 'lmrow'); r.append(el('span', 'lab dim', label)); const bar = el('span', 'lm big'); const i = el('i'); i.dataset.lmeter = m.id; i.dataset.side = side; bar.appendChild(i); r.appendChild(bar); return r; };
+    s.append(mt('Signal in', 'in'), mt('After mapping', 'out'));
+    const vv = el('div', 'lab'); vv.dataset.lval = m.id; vv.style.cssText = 'margin:4px 0 10px;text-transform:none;letter-spacing:0'; s.appendChild(vv);
+    const save = () => { Live.smooth.delete(m.id); Patch.persist(); };
+    const num = (label, key, step, ph) => { const r = el('label', 'lfield'); r.appendChild(el('span', 'lab dim', label)); const i = el('input', 'fld'); i.type = 'number'; i.step = step; i.value = m[key] == null ? '' : m[key]; if (ph != null) i.placeholder = ph; i.onchange = () => { m[key] = i.value === '' ? null : +i.value; save(); }; r.appendChild(i); return r; };
+    const g1 = el('div', 'lgrid'); g1.append(num('In from', 'inMin', 0.01), num('In to', 'inMax', 0.01), num('Out from', 'outMin', 'any', d ? String(d.min) : ''), num('Out to', 'outMax', 'any', d ? String(d.max) : '')); s.appendChild(g1);
+    const cr = el('label', 'lfield'); cr.appendChild(el('span', 'lab dim', 'Curve — where the movement is dense')); const cs = el('select', 'fld'); Object.keys(CURVES).forEach(c => cs.appendChild(new Option(c, c))); cs.value = m.curve || 'linear'; cs.onchange = () => { m.curve = cs.value; save(); }; cr.appendChild(cs); s.appendChild(cr);
+    const sm = el('label', 'lfield'); sm.appendChild(el('span', 'lab dim', 'Smoothing — how late (s)')); const si = el('input'); si.type = 'range'; si.min = 0; si.max = 2; si.step = 0.01; si.value = m.smooth || 0; const sv = el('span', 'lab', (+si.value).toFixed(2)); si.oninput = () => { m.smooth = +si.value; sv.textContent = (+si.value).toFixed(2); }; si.onchange = save; sm.append(si, sv); s.appendChild(sm);
+    const g2 = el('div', 'lgrid'); g2.append(num('Quantize — positions (0 = off)', 'quantize', 1));
+    const inv = el('label', 'lfield lchk'); const ic = el('input'); ic.type = 'checkbox'; ic.checked = !!m.invert; ic.onchange = () => { m.invert = ic.checked; save(); }; inv.append(ic, el('span', 'lab', 'Invert'));
+    const en = el('label', 'lfield lchk'); const ec = el('input'); ec.type = 'checkbox'; ec.checked = m.enabled !== false; ec.onchange = () => { m.enabled = ec.checked; save(); Patch.wires(); }; en.append(ec, el('span', 'lab', 'On'));
+    g2.append(inv, en); s.appendChild(g2);
+    const b = el('div', 'btns'), rm = el('button', 'lab', 'Remove link'); rm.onclick = () => Patch.removeLink(m.id); b.appendChild(rm); s.appendChild(b);
+    s.appendChild(el('p', 'note', 'The parameter owns min, max and default' + (d ? ' (' + d.min + ' – ' + d.max + ', default ' + d.default + ')' : '') + '; this link owns range, curve, smoothing, quantize and invert. When the source is silent — controller unplugged, tool closed — the tool keeps its own value.'));
+    return s;
+  }
+  function liveNodeSection(pt, nd) {
+    const tb = nd.type === 'live' ? Live.table(nd.tool) : null, s = sec(nd.type === 'live' ? 'Live tool' : 'Signals', 'livenode');
+    s.appendChild(el('div', 'selname', Patch.title(nd)));
+    const kv = el('div', 'kv');
+    if (nd.type === 'live') {
+      kv.append(el('span', null, 'Joins'), el('span', null, !tb ? 'not joined' : tb.via === 'mount' ? 'mounted in this node (LOCAL)' : tb.joined ? 'through the hub (NETWORK)' : 'was joined · left'));
+      if (tb) kv.append(el('span', null, 'Parameters'), el('span', null, String(Object.keys(tb.params || {}).length)), el('span', null, 'Signals'), el('span', null, (tb.signals || []).join(', ') || '—'), el('span', null, 'Actions'), el('span', null, (tb.actions || []).join(', ') || '—'));
+      if (tb && tb.page) kv.append(el('span', null, 'Page'), el('span', null, tb.page));
+    } else kv.append(el('span', null, 'Gives'), el('span', null, Live.ports(nd).outs.length + ' signals, 0–1'));
+    const ins = (pt.links || []).filter(m => m.b === nd.id).length, outs = (pt.links || []).filter(m => m.a === nd.id).length;
+    kv.append(el('span', null, 'Links'), el('span', null, ins + ' in · ' + outs + ' out'));
+    s.appendChild(kv);
+    if (tb && tb.problems && tb.problems.length) { s.appendChild(el('span', 'lab', 'Its table does not follow the contract yet')).style.cssText = 'display:block;margin:10px 0 4px;color:var(--a)'; tb.problems.forEach(p2 => s.appendChild(el('p', 'note', '▲ ' + p2))); }
+    const btns = el('div', 'btns'), mk = (lab, fn) => { const b = el('button', 'lab', lab); b.onclick = fn; btns.appendChild(b); };
+    const c = Patch.tool(nd.tool); if (c && (c.url || c.usable)) mk('Open the tool', () => useTool(c, -1)); if (c && c.url && (!tb || !tb.joined)) mk('Probe', () => Live.probeTool(c));
+    mk('Delete', () => Patch.remove(nd.id)); s.appendChild(btns);
+    return s;
+  }
+  // which tools speak the link language yet — the test for the joining contract
+  function linkCheckSection() {
+    const s = sec('Link check', 'linkcheck');
+    const kv = el('div', 'kv');
+    kv.append(el('span', null, 'Hub'), el('span', null, !S.live ? 'none — sample data (mounted tools only)' : Live.hub === 'on' ? 'on · ' + location.host + '/ws' : 'connecting…'));
+    kv.append(el('span', null, 'Clock'), el('span', null, Math.round(Live.bpm) + ' BPM' + (Live.hub === 'on' ? ' · held by the bridge' : ' · local')));
+    kv.append(el('span', null, 'MIDI'), el('span', null, Live.midi === 'on' ? 'on' : Live.midi === 'none' ? 'not in this browser' : 'off'));
+    s.appendChild(kv);
+    const br = el('div', 'drow'), bi = el('input', 'fld'); bi.type = 'number'; bi.min = 20; bi.max = 300; bi.value = Math.round(Live.bpm); bi.setAttribute('aria-label', 'Tempo in BPM'); const bb = el('button', 'lab', 'Set BPM'); bb.onclick = () => Live.setBpm(bi.value); br.append(bi, bb); s.appendChild(br);
+    const rows = new Map();
+    for (const [id, d] of Object.entries(MOUNTED)) rows.set(id, { name: d.name, st: 'mounted', t: Live.tools.get(id) });
+    for (const t of Live.tools.values()) if (t.via === 'net') rows.set(t.tool, { name: t.name, st: t.joined ? 'joined' : 'left', t });
+    S.tools.filter(t => t.group === 'system8').forEach(c => { if (!rows.has(c.id)) rows.set(c.id, { name: c.name, st: 'not joined', c }); });
+    for (const [id, r] of rows) {
+      const ok = r.t && !(r.t.problems || []).length, row = el('div', 'row lcrow');
+      const d = el('span', 'sdot ' + (r.t && !ok ? 'wait' : r.t && (r.st === 'joined' || r.st === 'mounted') ? 'run' : 'idle'));
+      const info = r.t ? Object.keys(r.t.params || {}).length + ' params · ' + (r.t.signals || []).length + ' signals' + ((r.t.problems || []).length ? ' · ' + r.t.problems.length + ' problems' : ' · follows the contract') : r.st === 'mounted' ? 'built in · mounts when placed in a patch' : 'does not load s8link.js yet';
+      const g = el('div', 'grow'); g.append(el('div', null, r.name), el('div', 'lab dim', r.st + ' · ' + info)); row.append(d, g);
+      if (r.c && r.c.url) { const b = el('button', 'lab', 'Probe'); b.onclick = () => Live.probeTool(r.c); row.appendChild(b); }
+      s.appendChild(row);
+      if (r.t && (r.t.problems || []).length) r.t.problems.slice(0, 4).forEach(p2 => s.appendChild(el('div', 'lab lprob2', '▲ ' + p2)));
+      void id;
+    }
+    s.appendChild(el('span', 'lab dim', 'How a tool joins')).style.cssText = 'display:block;margin:12px 0 6px';
+    const code = `<script src="${S.live ? location.origin : 'http://127.0.0.1:8808'}/s8link.js"><\/script>
+<script>
+S8Link.join({
+  tool: 'keha', name: 'KEHÄ',
+  params: {
+    radius: { get: () => r, set: v => r = v, min: 0, max: 400, default: 120 },
+  },
+  signals: { pressure: () => pen.pressure },
+});
+<\/script>`;
+    const pre = el('pre', 'lcode', code); s.appendChild(pre);
+    const cp = el('button', 'lab', 'Copy'); cp.onclick = () => { navigator.clipboard && navigator.clipboard.writeText(code).then(() => toast('Copied'), () => toast('Select the text and copy it')); }; s.appendChild(cp);
+    s.appendChild(el('p', 'note', 'Use the tool id from config.json, so its name in the orbit, its material node and its live node are one tool. Scalars only — a colour is three parameters. Probe opens the tool with the hub address and waits eight seconds for it to say hello.' + (S.live ? ' A working example: ' + location.origin + '/link-example.html' : '')));
+    return s;
   }
   function renderRun() {
     const run = document.getElementById('run-body'); if (!run) return;
@@ -2323,6 +3199,8 @@
     // make: a virtual group, or a real folder on disk
     s.appendChild(el('span', 'flab lab', 'Make'));
     const mb = el('div', 'btns'), m2 = (lab, fn) => { const b = el('button', 'lab', lab); b.onclick = fn; mb.appendChild(b); return b; };
+    m2('Pick all here', () => { const nd2 = T.nodes[id]; if (nd2.n > 5000) return toast(fmt(nd2.n) + ' files — zoom closer, or open this as a lens and save it'); pickMany(T.order.slice(nd2.a, nd2.b)); });
+    m2('Bring files…', () => $('#bringfile').click());
     m2('New group', () => openLens({ title: 'Group ' + (S.groups.length + S.lenses.length + 1), empty: true }));
     const where = nodeDir(T, id);
     const fb = m2('New folder here', () => { form.hidden = !form.hidden; if (!form.hidden) fin.focus(); });
@@ -2333,7 +3211,8 @@
     const fgo = el('button', 'lab', 'Create'); fgo.onclick = () => makeFolder(where, fin.value);
     fin.onkeydown = e => { if (e.key === 'Enter') { e.stopPropagation(); makeFolder(where, fin.value); } };
     form.append(fin, fgo); s.appendChild(form);
-    if (where) s.appendChild(el('p', 'note', 'A group is virtual — files stay where they are. A folder is real, made in ' + where.label + '.'));
+    const bt = dropTarget();
+    s.appendChild(el('p', 'note', 'Shift-click files to pick several. A virtual folder is a name for picked files — they stay where they are.' + (where ? ' A new folder is real, made in ' + where.label + '.' : '') + (bt ? ' Files you bring (or drop on the page) are copied into ' + bt.label + '.' : '')));
     return s;
   }
   function selectionSection(i) {
@@ -2509,6 +3388,7 @@
         if (typing) { e.target.blur(); return; }
         if (!$('#vList').hidden) return closeVList();
         if (S.left || S.right) { setPanel('left', false); setPanel('right', false); return; }
+        if (S.multi.size) { clearPicks(); return; }
         back(); return;
       }
       if (typing || e.metaKey || e.ctrlKey || e.altKey) return;
@@ -2517,7 +3397,7 @@
       else if (k === '[') togglePanel('left');
       else if (k === ']') togglePanel('right');
       else if (k >= '1' && k <= '5') setView(VIEWS[+k - 1][0]);
-      else if ((k === 'Backspace' || k === 'Delete') && S.mode === 'patch') { e.preventDefault(); if (Patch.sel) Patch.remove(Patch.sel); else if (Patch.selWire >= 0) { Patch.P.wires.splice(Patch.selWire, 1); Patch.selWire = -1; Patch.persist(); Patch.view(); } }
+      else if ((k === 'Backspace' || k === 'Delete') && S.mode === 'patch') { e.preventDefault(); if (Patch.sel) Patch.remove(Patch.sel); else if (Patch.selLink) Patch.removeLink(Patch.selLink); else if (Patch.selWire >= 0) { Patch.P.wires.splice(Patch.selWire, 1); Patch.selWire = -1; Patch.persist(); Patch.view(); } }
       else if (k === 'Backspace') { e.preventDefault(); up(); }
       else if (k === 'ArrowLeft' && S.mode === 'item') stepItem(-1);
       else if (k === 'ArrowRight' && S.mode === 'item') stepItem(1);
@@ -2564,18 +3444,21 @@
     S.hiddenK = new Uint8Array(D.kinds.length);
     readColors();
     bootMsg('Growing the rings'); await nextFrame();
+    await loadLinks();
     buildTrees();
     await Patch.load();
     await loadGroups(); await loadDeadlines(); computeFlags();
+    bindPicks();
+    Live.loop(); Live.connect();
     W = window.innerWidth; H = window.innerHeight;
     bind(); resize(); render(); updateDot();
     $('#boot').remove();
     if (document.fonts && document.fonts.ready) document.fonts.ready.then(() => { FONTS = ''; invalidate(); });
     if (S.live) setInterval(pollTasks, 3000);
     else { const cut = S.tasks.find(t => t.id === 'cut'); if (cut) demoRun(cut, 0); }
-    window.__s8 = { S, Rings, Graph, Patch, LensView, Orbit, get D() { return D; }, go, openItem, select, setQuery, setView, locate, focusNode, focusAll, openLens, closeLens, clearLenses, addToLens, nodeLens, saveLens, openGroup, setDeadline, computeFlags, ringGeo };
+    window.__s8 = { S, Rings, Graph, Patch, LensView, Orbit, get D() { return D; }, go, openItem, select, setQuery, setView, locate, focusNode, focusAll, openLens, closeLens, clearLenses, addToLens, nodeLens, saveLens, openGroup, setDeadline, computeFlags, ringGeo, togglePick, clearPicks, pickMany, bringFiles, Live, openPanel, setPanel, fromTemplate, Help, helpCtx, LESSONS, Flow };
     window.__ready = true;
   }
-  function applyStatus(st0) { S.status = st0; S.tools = st0.tools || []; S.tasks = st0.tasks || []; S.progress = st0.progress; S.caps = st0.caps || {}; }
+  function applyStatus(st0) { S.status = st0; S.engines = st0.engines || []; S.tools = st0.tools || []; S.tasks = st0.tasks || []; S.progress = st0.progress; S.caps = st0.caps || {}; }
   boot().catch(e => { console.error(e); bootMsg('Could not start: ' + e.message); });
 })();

@@ -1,0 +1,65 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>SYSTEM 8 · link example</title>
+<style>
+  :root { --g:#EDEDEB; --t:#141414; --d:#5E5E5A; --a:#FF3A1E; }
+  @media (prefers-color-scheme: dark) { :root { --g:#0B0B0B; --t:#F2F2F2; --d:#8A8A8A; } }
+  html, body { margin: 0; height: 100%; background: var(--g); color: var(--t); font: 400 12px/16px "Inter Tight", Inter, system-ui, sans-serif; letter-spacing: .08em; text-transform: uppercase; }
+  canvas { position: fixed; inset: 0; width: 100%; height: 100%; touch-action: none; }
+  .bar { position: fixed; left: 16px; top: 14px; right: 16px; display: flex; justify-content: space-between; pointer-events: none; }
+  .bar b { font-weight: 700; } .dim { color: var(--d); }
+</style>
+</head>
+<body>
+<canvas id="c"></canvas>
+<div class="bar"><span><b>LINK EXAMPLE</b> <span class="dim">· a tool that joins once</span></span><span id="st" class="dim">ALONE</span></div>
+<script src="s8link.js"></script>
+<script>
+// A tiny radial tool. Everything a link can touch is in `params`; `signals` are what it gives out.
+const cv = document.getElementById('c'), cx = cv.getContext('2d');
+let radius = 140, petals = 9, twist = 0.2, weight = 2, press = 0, down = false, px = 0.5, py = 0.5;
+S8Link.join({
+  tool: 'link-example', name: 'Link example',
+  params: {
+    radius: { get: () => radius, set: v => radius = v, min: 20, max: 400, default: 140 },
+    petals: { get: () => petals, set: v => petals = Math.round(v), min: 3, max: 48, default: 9 },
+    twist:  { get: () => twist,  set: v => twist = v, min: -1, max: 1, default: 0.2 },
+    weight: { get: () => weight, set: v => weight = v, min: 0.5, max: 8, default: 2 },
+  },
+  signals: { pressure: () => press, x: () => px, y: () => py },
+  actions: { reset: () => { radius = 140; petals = 9; twist = 0.2; weight = 2; } },
+});
+S8Link.on(m => { if (m.t === 'state') document.getElementById('st').textContent = m.state === 'joined' ? 'JOINED' : 'ALONE · RUNS ANYWAY'; });
+addEventListener('pointerdown', e => { down = true; move(e); });
+addEventListener('pointerup', () => { down = false; });
+addEventListener('pointermove', move);
+function move(e) { px = e.clientX / innerWidth; py = 1 - e.clientY / innerHeight; if (down) press = e.pressure > 0 && e.pressure !== 0.5 ? e.pressure : 1; }
+function draw(t) {
+  const d = devicePixelRatio || 1, W = innerWidth, H = innerHeight;
+  if (cv.width !== W * d) { cv.width = W * d; cv.height = H * d; }
+  cx.setTransform(d, 0, 0, d, 0, 0);
+  const css = getComputedStyle(document.documentElement);
+  cx.fillStyle = css.getPropertyValue('--g'); cx.fillRect(0, 0, W, H);
+  if (!down) press *= 0.92;
+  cx.strokeStyle = css.getPropertyValue('--t'); cx.lineWidth = weight;
+  const r = radius * (1 + press * 0.3);
+  for (let k = 0; k < petals; k++) {
+    const a = k / petals * Math.PI * 2 + t * 0.0002;
+    cx.beginPath();
+    for (let s = 0; s <= 40; s++) {
+      const u = s / 40, rr = r * Math.sin(u * Math.PI), aa = a + twist * Math.sin(u * Math.PI) * 1.4;
+      const x = W / 2 + Math.cos(aa) * rr * u * 1.6 * 0.6, y = H / 2 + Math.sin(aa) * rr * u * 1.6 * 0.6;
+      s ? cx.lineTo(x, y) : cx.moveTo(x, y);
+    }
+    cx.stroke();
+  }
+  cx.fillStyle = css.getPropertyValue('--a'); cx.fillRect(W / 2 - 3, H / 2 - 3, 6, 6);
+  requestAnimationFrame(draw);
+}
+requestAnimationFrame(draw);
+</script>
+</body>
+</html>

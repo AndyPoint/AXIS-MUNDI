@@ -391,3 +391,100 @@ kbd { border: 0; background: var(--g); background: color-mix(in srgb, var(--t) 8
 #legend .lgr.lens .nm { font-weight: 700; }
 #legend .lgl .no { width: 12px; flex: none; font-weight: 700; color: var(--d); font-variant-numeric: tabular-nums; }
 #legend .lgl.on .no { color: var(--t); }
+
+/* 1.4 · picking several files, virtual folders, bringing files in */
+#pickbar { position: fixed; left: 50%; transform: translateX(-50%); bottom: 16px; z-index: 45; display: flex; align-items: center; gap: 10px; background: var(--t); color: var(--g); padding: 8px 10px 8px 16px; max-width: calc(100vw - 32px); flex-wrap: wrap; }
+#pickbar[hidden] { display: none; }
+#pickbar .pn-n { color: var(--g); white-space: nowrap; margin-right: 4px; }
+#pickbar .fld { width: 220px; margin: 0; height: 32px; background: var(--g); color: var(--t); border: 0; padding: 0 10px; }
+#pickbar select.fld { width: 160px; }
+#pickbar button { height: 32px; padding: 0 10px; color: var(--g); background: transparent; border: 0; }
+#pickbar button:hover { background: color-mix(in srgb, var(--g) 14%, transparent); }
+#pickbar button.solid { background: var(--a); color: #fff; }
+.tile.picked .im { outline: 2px solid var(--a); outline-offset: 2px; }
+.tile.picked .im::after { content: ''; position: absolute; right: -2px; top: -2px; width: 11px; height: 11px; background: var(--a); }
+.tile .im { position: relative; }
+#dropzone { position: fixed; inset: 0; z-index: 70; background: color-mix(in srgb, var(--g) 82%, transparent); display: flex; align-items: center; justify-content: center; pointer-events: none; }
+#dropzone[hidden] { display: none; }
+#dropzone > div { border: 2px dashed var(--t); padding: 40px 56px; display: flex; flex-direction: column; gap: 10px; background: var(--g); min-width: 420px; }
+#dropzone b { font-size: 22px; line-height: 28px; }
+#dropzone span:last-child { color: var(--d); }
+@media (max-width: 760px) { #pickbar { bottom: 64px; } #pickbar .fld { width: 150px; } }
+
+/* 1.5 · live links — the Builder's link language in the patch room */
+.ltab { display: flex; flex-direction: column; gap: 1px; margin: 4px -12px 0; }
+.lr { display: grid; grid-template-columns: 12px minmax(0, 1fr) 64px 38px 12px; align-items: center; gap: 6px; height: 22px; padding: 0 0 0 0; position: relative; }
+.lr .ln { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 11px; }
+.lr .lv { font-size: 10px; color: var(--d); text-align: right; font-variant-numeric: tabular-nums; }
+.lm { display: block; height: 4px; background: var(--l); position: relative; }
+.lm i { position: absolute; left: 0; top: 0; bottom: 0; background: var(--t); width: 0; }
+.lm.big { height: 6px; flex: 1; }
+.lr .lsl { width: 64px; height: 14px; margin: 0; accent-color: var(--t); }
+.ls { width: 12px; height: 4px; background: var(--d); display: block; cursor: crosshair; }
+.ls.in { justify-self: start; } .ls.out { justify-self: end; background: var(--t); }
+.ls.in.none { visibility: hidden; }
+.ls.ok { background: var(--t); outline: 1px solid var(--a); outline-offset: 3px; } .ls.no { opacity: .25; }
+.pwires .plink { fill: none; stroke: var(--t); stroke-width: 1.5; stroke-dasharray: none; }
+.pwires .plink.sel { stroke: var(--a); stroke-width: 2.5; }
+.pwires .plink.off { stroke: var(--d); stroke-dasharray: 3 4; }
+.pwires .plink.temp { stroke: var(--t); stroke-dasharray: 4 3; }
+.lmount { margin: 0 0 8px; } .lmount .lmc { display: block; width: 220px; height: 120px; touch-action: none; cursor: crosshair; }
+.lprob { color: var(--a); margin-top: 6px; text-transform: none; letter-spacing: 0; }
+.lprob2 { color: var(--a); margin: -4px 0 8px 20px; text-transform: none; letter-spacing: 0; line-height: 15px; }
+.lmrow { display: flex; align-items: center; gap: 10px; margin: 6px 0; } .lmrow .lab { width: 96px; }
+.lgrid { display: grid; grid-template-columns: 1fr 1fr; gap: 6px 12px; margin: 6px 0; }
+.lfield { display: flex; flex-direction: column; gap: 4px; margin: 6px 0; } .lfield .fld { margin: 0; }
+.lfield input[type=range] { accent-color: var(--t); }
+.lchk { flex-direction: row; align-items: center; gap: 8px; } .lchk input { accent-color: var(--t); }
+.lcode { font-size: 11px; line-height: 16px; background: var(--g); padding: 10px; white-space: pre-wrap; overflow-wrap: anywhere; margin: 0 0 8px; font-family: ui-monospace, Menlo, monospace; text-transform: none; letter-spacing: 0; }
+.lcrow { align-items: center; gap: 10px; min-height: 40px; padding: 6px 0; }
+.lcrow .lab { white-space: normal; overflow: visible; text-overflow: clip; line-height: 14px; margin-top: 2px; }
+.pn:has(.ltab) { width: 252px; }
+
+/* 1.5 · help in the left panel: a pill switches it, a card says what is in front of you, lessons step through */
+.ph .hpill { margin-left: auto; margin-right: 8px; }
+.hpill { height: 22px; padding: 0 10px; border-radius: 11px; border: 0; background: var(--b2); color: var(--d); font-size: 10px; letter-spacing: .1em; cursor: pointer; }
+.hpill.on { background: var(--t); color: var(--g); }
+.hpill:focus-visible { outline: 2px solid var(--a); outline-offset: 2px; }
+.helpb { padding-bottom: 4px; }
+.hctx { background: var(--g); padding: 12px 14px 14px; margin: 0 0 12px; }
+.hctx .htitle { font-weight: 700; font-size: 15px; line-height: 20px; margin: 4px 0 6px; }
+.hctx .htext { margin: 0 0 8px; font-size: 13px; line-height: 19px; text-transform: none; letter-spacing: 0; }
+.hctx .btn { margin-top: 4px; }
+.hsteps { margin: 6px 0 0; padding-left: 18px; font-size: 12px; line-height: 18px; color: var(--d); }
+.hsteps li { margin: 2px 0; }
+.hlh { display: block; margin: 4px 0 2px; }
+.hrow.sug .grow { font-weight: 700; }
+.hrow.sug .r { color: var(--a); }
+.hnav { display: flex; align-items: center; justify-content: space-between; gap: 8px; margin: 0 0 8px; }
+.hnav .btn { flex: 1; }
+.hnav .btn:disabled { opacity: .35; cursor: default; }
+.hdots { display: flex; gap: 6px; justify-content: center; margin: 2px 0 6px; }
+.hdot { width: 8px; height: 8px; border-radius: 50%; border: 0; padding: 0; background: var(--l); cursor: pointer; }
+.hdot.on { background: var(--t); }
+.helphl { outline: 2px solid var(--a) !important; outline-offset: 3px; animation: s8blink 0.8s 3; }
+@media (prefers-reduced-motion: reduce) { .helphl { animation: none; } }
+
+/* 1.6 · the pick bar belongs to the interface: a pale panel, a dark action, red-orange only on the count (state) */
+#pickbar { background: var(--s); color: var(--t); padding: 8px 8px 8px 16px; gap: 8px; bottom: 20px; border-top: 4px solid var(--t); }
+#pickbar .pn-n { color: var(--t); display: inline-flex; align-items: center; gap: 8px; margin-right: 8px; }
+#pickbar .pn-n::before { content: ""; width: 8px; height: 8px; background: var(--a); flex: none; }
+#pickbar .fld { background: transparent; color: var(--t); border: 0; border-bottom: 1px solid var(--l); padding: 0 2px; }
+#pickbar .fld:focus { border-bottom-color: var(--t); }
+#pickbar button { color: var(--t); background: var(--g); padding: 0 14px; }
+#pickbar button:hover { background: var(--t); color: var(--g); }
+#pickbar button.solid { background: var(--t); color: var(--g); }
+#pickbar button.solid:hover { background: var(--d); }
+/* 1.6 · flow nodes */
+.pn:has(.fstrip), .pn:has(.ftext), .pn:has(.frow) { width: 228px; }
+.fstrip { display: grid; grid-template-columns: repeat(4, 1fr); gap: 2px; }
+.fth { aspect-ratio: 1; background: var(--g); overflow: hidden; display: flex; align-items: center; justify-content: center; font-size: 9px; color: var(--d); }
+.fth img, .fth canvas { width: 100%; height: 100%; object-fit: cover; display: block; }
+.frow { display: flex; align-items: center; gap: 8px; }
+.frow > .lab { flex: none; width: 62px; }
+.frow .fld { flex: 1; min-width: 0; width: auto; }
+.frow select.fld { padding: 0; }
+.fpair { display: flex; gap: 10px; } .fpair .frow { flex: 1; } .fpair .frow > .lab { width: auto; }
+.fcheck { gap: 6px; } .fcheck input { accent-color: var(--t); }
+.pnb textarea.ftext { height: auto; min-height: 92px; resize: vertical; padding: 6px 0; line-height: 17px; font-family: inherit; border-bottom: 1px solid var(--l); }
+.pnb .btns button:disabled { opacity: .35; cursor: default; }
