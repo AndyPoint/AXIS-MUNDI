@@ -54,7 +54,9 @@
     { "id": "blender",   "name": "Blender",     "group": "apps", "open": { "mac": "Blender", "win": "C:/Program Files/Blender Foundation/Blender 4.2/blender.exe" }, "exts": ["blend","fbx","obj","glb","gltf","usd","usdz","abc","stl","ply"], "sector": "architecture" },
     { "id": "unreal",    "name": "Unreal Engine","group": "apps", "open": { "mac": "UnrealEditor", "win": "C:/Program Files/Epic Games/UE_5.4/Engine/Binaries/Win64/UnrealEditor.exe" }, "exts": ["uproject","umap"], "sector": "architecture" },
     { "id": "touchdesigner","name": "TouchDesigner","group": "apps", "open": { "mac": "TouchDesigner", "win": "C:/Program Files/Derivative/TouchDesigner/bin/TouchDesigner.exe" }, "exts": ["toe","tox"], "sector": "video" },
-    { "id": "resolume",  "name": "Resolume Wire","group": "apps", "open": { "mac": "Wire", "win": "C:/Program Files/Resolume Wire/Wire.exe" }, "exts": ["mov","mp4"], "sector": "video" },
+    { "id": "resolume",  "name": "Resolume Wire","group": "apps", "open": { "mac": "Wire", "win": "C:/Program Files/Resolume Wire/Wire.exe" }, "exts": ["mov","mp4","png","jpg"], "sector": "video" },
+    { "id": "arena",     "name": "Resolume Arena","group": "apps", "open": { "mac": "Resolume Arena", "win": "C:/Program Files/Resolume Arena/Arena.exe" }, "exts": ["mov","mp4","png","jpg"], "sector": "video" },
+    { "id": "resolve",   "name": "DaVinci Resolve","group": "apps", "open": { "mac": "DaVinci Resolve", "win": "C:/Program Files/Blackmagic Design/DaVinci Resolve/Resolve.exe" }, "exts": ["mov","mp4","mxf","png","jpg","exr","wav"], "sector": "video" },
     { "id": "bitwig",    "name": "Bitwig",      "group": "apps", "open": { "mac": "Bitwig Studio", "win": "C:/Program Files/Bitwig Studio/Bitwig Studio.exe" }, "exts": ["bwproject","wav","aif","aiff"], "sector": "art" },
     { "id": "comfyui",   "name": "ComfyUI",     "group": "apps", "url": "http://127.0.0.1:8188/", "sector": "generation" },
     { "id": "midjourney","name": "Midjourney",  "group": "apps", "url": "https://www.midjourney.com/imagine", "sector": "generation" },
@@ -62,6 +64,20 @@
     { "id": "cursor",    "name": "Cursor",      "group": "apps", "open": { "mac": "Cursor", "win": "C:/Users/YOU/AppData/Local/Programs/cursor/Cursor.exe" }, "exts": ["html","jsx","tsx","py","glsl"], "sector": "brain" },
     { "id": "framer",    "name": "Framer",      "group": "apps", "url": "https://framer.com/projects", "sector": "art" }
   ],
+
+  "engines": [
+    { "id": "comfy",      "name": "ComfyUI · local",  "where": "local", "gives": "image", "url": "http://127.0.0.1:8188/", "cmd": [] },
+    { "id": "comfy-video","name": "ComfyUI · video",  "where": "local", "gives": "video", "url": "http://127.0.0.1:8188/", "cmd": [] },
+    { "id": "midjourney", "name": "Midjourney",       "where": "cloud", "gives": "image", "url": "https://www.midjourney.com/imagine" },
+    { "id": "claude",     "name": "Claude",           "where": "cloud", "gives": "text",  "url": "https://claude.ai/new" }
+  ],
+
+  "bridges": {
+    "ffmpeg": "ffmpeg",
+    "blender":  { "mac": "/Applications/Blender.app/Contents/MacOS/Blender", "win": "C:/Program Files/Blender Foundation/Blender 4.2/blender.exe" },
+    "resolume": { "url": "http://127.0.0.1:8080" },
+    "resolve":  { "python": "" }
+  },
 
   "tasks": [
     { "id": "reindex", "name": "Reindex archive",   "builtin": "reindex" },

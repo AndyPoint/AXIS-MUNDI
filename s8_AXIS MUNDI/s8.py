@@ -19,6 +19,7 @@ ffmpeg for video thumbnails; on macOS, sips / qlmanage are used automatically.
   python3 s8.py --index-only  rebuild the index and exit
 """
 import argparse
+import base64
 import gzip
 import hashlib
 import html
@@ -42,7 +43,7 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from urllib.parse import parse_qs, quote, unquote, urlparse
 
-VERSION = '1.3'
+VERSION = '1.6'
 MD_PARSE_V = 2  # bump when parse_md learns new keys, so notes are read again
 HERE = Path(__file__).resolve().parent
 WEB = HERE / 'web'
@@ -474,9 +475,136 @@ def build_index(cfg, progress, cache):
     }, newcache
 
 
+# ───────────────────────────────────────────── link hub
+# The websocket the Builder's NETWORK tier connects to, and the one SYSTEM 8 tools join through s8link.js.
+# Messages are the Builder's own: {t:'sig', id, v, raw} and {t:'act', id, args}; tools add
+# {t:'hello', tool, params, signals, actions} once, and receive {t:'set', tool, p, v} / {t:'act', tool, id, args}.
+# The hub relays and keeps the clock. It never evaluates a mapping: the patch room does, so a link lives while it is open.
+
+LINK_KEYS = ('id', 'a', 'ap', 'b', 'bp', 'enabled', 'inMin', 'inMax', 'outMin', 'outMax', 'curve', 'smooth', 'quantize', 'invert')
+
+
+def check_table(h):
+    # the joining contract: scalars only, min < max, default inside the range
+    problems = []
+    if not re.fullmatch(r'[a-z0-9][a-z0-9_\-]{0,40}', str(h.get('tool', ''))):
+        problems.append('tool id must be short, lowercase, letters/numbers/-/_')
+    ps = h.get('params')
+    if not isinstance(ps, dict):
+        problems.append('params is not a table'); ps = {}
+    for name, d in list(ps.items())[:200]:
+        if not isinstance(d, dict):
+            problems.append(f'{name}: not a table'); continue
+        mn, mx, df = d.get('min'), d.get('max'), d.get('default', d.get('min'))
+        if not all(isinstance(x, (int, float)) and not isinstance(x, bool) for x in (mn, mx)):
+            problems.append(f'{name}: min and max must be numbers — expose scalars, never vectors or colours'); continue
+        if not mn < mx:
+            problems.append(f'{name}: min must be below max')
+        if isinstance(df, (int, float)) and not (mn <= df <= mx):
+            problems.append(f'{name}: default {df} is outside {mn}–{mx}')
+        if 'value' in d and not isinstance(d['value'], (int, float)):
+            problems.append(f'{name}: current value is not a number')
+    for k in ('signals', 'actions'):
+        if k in h and not (isinstance(h[k], list) and all(isinstance(x, str) for x in h[k])):
+            problems.append(f'{k} must be a list of names')
+    if not ps and not h.get('signals'):
+        problems.append('declares no parameters and no signals — nothing can link to it')
+    return problems
+
+
+class LinkHub:
+    def __init__(self):
+        self.clients, self.lock, self.tools = {}, threading.Lock(), {}
+        self.bpm, self.t0, self.listeners = 120.0, time.time(), 0
+        threading.Thread(target=self._clock, daemon=True).start()
+
+    def add(self, cid, sender):
+        with self.lock:
+            self.clients[cid] = {'send': sender, 'tool': None}
+        sender(json.dumps({'t': 'tools', 'tools': list(self.tools.values()), 'bpm': self.bpm}))
+
+    def drop(self, cid):
+        with self.lock:
+            c = self.clients.pop(cid, None)
+        if c and c['tool']:
+            tid = c['tool']
+            if not any(x['tool'] == tid for x in self.clients.values()):
+                t = self.tools.get(tid)
+                if t:
+                    t['joined'] = False; t['left'] = now()
+                self.broadcast({'t': 'bye', 'tool': tid}, None)
+
+    def broadcast(self, msg, skip):
+        raw = json.dumps(msg, ensure_ascii=False)
+        with self.lock:
+            targets = [(k, c['send']) for k, c in self.clients.items() if k != skip]
+        for k, send in targets:
+            try:
+                send(raw)
+            except Exception:
+                pass
+
+    def handle(self, cid, raw):
+        try:
+            m = json.loads(raw)
+        except ValueError:
+            return
+        if not isinstance(m, dict):
+            return
+        t = m.get('t')
+        if t == 'hello':
+            tid = str(m.get('tool', ''))[:41]
+            entry = {'tool': tid, 'name': str(m.get('name') or tid)[:80], 'params': m.get('params') if isinstance(m.get('params'), dict) else {},
+                     'signals': m.get('signals') if isinstance(m.get('signals'), list) else [], 'actions': m.get('actions') if isinstance(m.get('actions'), list) else [],
+                     'requires': str(m.get('requires', 'LOCAL'))[:20], 'accepts': m.get('accepts') if isinstance(m.get('accepts'), list) else [],
+                     'problems': check_table(m), 'joined': True, 'seen': now(), 'page': str(m.get('page', ''))[:300]}
+            self.tools[tid] = entry
+            with self.lock:
+                if cid in self.clients:
+                    self.clients[cid]['tool'] = tid
+            self.broadcast({'t': 'hello', **entry}, None)
+        elif t == 'clock' and isinstance(m.get('bpm'), (int, float)) and 20 <= m['bpm'] <= 300:
+            # keep the beat continuous while the tempo changes
+            beats = (time.time() - self.t0) * self.bpm / 60
+            self.bpm = float(m['bpm']); self.t0 = time.time() - beats * 60 / self.bpm
+            self.broadcast({'t': 'clock', 'bpm': self.bpm}, None)
+        elif t in ('sig', 'act', 'set'):
+            with self.lock:
+                tid = self.clients.get(cid, {}).get('tool')
+            if tid and tid in self.tools:
+                self.tools[tid]['seen'] = now()
+            self.broadcast(m, cid)
+
+    def _clock(self):
+        # the bridge holds the clock; everything else follows it (timing is never derived across the network twice)
+        while True:
+            time.sleep(1 / 30)
+            if not self.clients:
+                continue
+            beats = (time.time() - self.t0) * self.bpm / 60
+            self.broadcast({'t': 'sig', 'id': 'clock.beat', 'v': beats % 1, 'raw': beats}, None)
+            self.broadcast({'t': 'sig', 'id': 'clock.bar', 'v': (beats / 4) % 1, 'raw': beats / 4}, None)
+
+    def status(self):
+        with self.lock:
+            n = len(self.clients); named = sum(1 for c in self.clients.values() if c['tool'])
+        return {'clients': n, 'listeners': n - named, 'bpm': self.bpm, 'tools': list(self.tools.values())}
+
+
+HUB = LinkHub()
+
+
+def ws_accept(key):
+    return base64.b64encode(hashlib.sha1((key + '258EAFA5-E914-47DA-95CA-C5AB0DC85B11').encode()).digest()).decode()
+
+
 # ───────────────────────────────────────────── tasks
 
 NEED_RE = re.compile(r'^\s*S8:\s*(needs?|wait(?:ing)?|ask)\b[:\s]*(.*)$', re.I)
+
+
+MAT_SLOTS = ('texture', 'bump', 'light', 'reflection', 'normal', 'displacement', 'transparency')
+MODEL_EXTS = {'blend', 'glb', 'gltf', 'obj', 'fbx', 'usd', 'usdz', 'usda', 'usdc', 'abc', 'stl', 'ply'}
 
 
 class Task:
@@ -492,7 +620,7 @@ class Task:
              'work': s.get('work', ''), 'need': getattr(self, 'need', ''),
              't0': self.t0, 't1': self.t1, 'last': self.log[-1] if self.log else '',
              'machine': s.get('machine', ''), 'note': s.get('note', ''), 'here': self.here(),
-             'ready': bool(s.get('builtin') or s.get('cmd'))}
+             'ready': bool(s.get('builtin') or s.get('cmd')), 'job': bool(s.get('job'))}
         if full:
             d['log'] = list(self.log)
         return d
@@ -939,6 +1067,11 @@ class Bridge:
             if self.item_path(i) is not None:
                 keys.append(self.item_key(i))
         rule = str(body.get('rule', ''))[:400]
+        try:
+            prev_f = STATE / 'groups' / f'{gid}.json'
+            prev = json.loads(prev_f.read_text(encoding='utf-8')).get('note') if prev_f.exists() else None
+        except Exception:
+            prev = None
         d = STATE / 'groups'
         d.mkdir(parents=True, exist_ok=True)
         (d / f'{gid}.json').write_text(json.dumps({'id': gid, 'name': name, 'rule': rule, 'keys': keys,
@@ -958,7 +1091,19 @@ class Bridge:
         text = '\n'.join(['---', 's8: group', f'id: {gid}', f'rule: {q(rule)}', f'count: {len(keys)}',
                           f'saved: {time.strftime("%Y-%m-%d %H:%M")}', '---', '', f'# {name}', '',
                           (f'Rule: `{rule}`' if rule else 'Hand-picked files.') + (f' Plus {len(keys)} picked files.' if rule and keys else ''), ''] + links) + '\n'
-        (folder / f'{name}.md').write_text(text, encoding='utf-8')
+        note = folder / f'{name}.md'
+        old = STATE / 'groups' / f'{gid}.json'
+        if not prev:  # saved by an older build: find the old note by its id
+            for f in folder.glob('*.md'):
+                try:
+                    if f != note and re.search(rf'^id: {re.escape(gid)}$', f.read_text(encoding='utf-8', errors='replace')[:400], re.M):
+                        prev = str(f); break
+                except OSError:
+                    pass
+        note.write_text(text, encoding='utf-8')
+        if prev and Path(prev) != note and Path(prev).exists() and f'id: {gid}' in Path(prev).read_text(encoding='utf-8', errors='replace'):
+            Path(prev).unlink()  # renamed: the old note goes, the new one carries the same id
+        g = json.loads(old.read_text(encoding='utf-8')); g['note'] = str(note); old.write_text(json.dumps(g, ensure_ascii=False), encoding='utf-8')
         return {'ok': True, 'id': gid, 'count': len(keys), 'path': str(folder / f'{name}.md')}
 
     def group_delete(self, gid):
@@ -990,6 +1135,132 @@ class Bridge:
         target.mkdir()
         return {'ok': True, 'path': str(target)}
 
+    # bringing files in -------------------------------------------------------
+    def import_file(self, root_ix, rel, name, stream, length):
+        idx = self.index
+        try:
+            ri = int(root_ix); root = idx['roots'][ri]
+        except (TypeError, ValueError, IndexError, KeyError):
+            return {'ok': False, 'error': 'Unknown source folder'}
+        name = os.path.basename(str(name or '').replace('\\', '/')).strip()
+        if not name or name in ('.', '..') or re.search(r'[:*?"<>|]', name) or len(name) > 200:
+            return {'ok': False, 'error': 'Unusable file name: ' + name}
+        if length > 4 * 1024 ** 3:
+            return {'ok': False, 'error': name + ' is larger than 4 GB'}
+        base = Path(root['path']).resolve()
+        parent = base.joinpath(*[x for x in str(rel or '').split('/') if x and x not in ('.', '..')]).resolve()
+        if parent != base and base not in parent.parents:
+            return {'ok': False, 'error': 'That place is outside your folders'}
+        parent.mkdir(parents=True, exist_ok=True)
+        stem, dot, ext = name.rpartition('.')
+        if not dot:
+            stem, ext = name, ''
+        target, k = parent / name, 2
+        while target.exists():
+            target = parent / (f'{stem} ({k}).{ext}' if ext else f'{stem} ({k})'); k += 1
+        left = length
+        with open(target, 'wb') as f:
+            while left > 0:
+                chunk = stream.read(min(1 << 20, left))
+                if not chunk:
+                    break
+                f.write(chunk); left -= len(chunk)
+        if left > 0:
+            target.unlink(missing_ok=True)
+            return {'ok': False, 'error': 'Upload cut off: ' + name}
+        i = self.append_item(ri, parent, target)
+        return {'ok': True, 'path': str(target), 'i': i, 'name': target.name}
+
+    def append_item(self, ri, parent, target):
+        # add one new file to the live index without a full reindex; existing item numbers stay the same
+        idx, cfg = self.index, self.cfg
+        root_cfg = cfg['roots'][ri] if ri < len(cfg.get('roots', [])) else {}
+        rsec, depth = root_cfg.get('sector', 'auto'), int(root_cfg.get('workDepth', 1))
+        stem, dot, ext = target.name.rpartition('.')
+        kind = classify(target.name, ext.lower(), rsec) if dot else None
+        if kind is None:
+            return -1
+        base = Path(idx['roots'][ri]['path']).resolve()
+        rel = '/'.join(parent.relative_to(base).parts)
+        sids = {s_['id']: k for k, s_ in enumerate(idx['sectors'])}
+        sec = rsec if rsec != 'auto' else AUTO_SECTOR.get(kind, idx['sectors'][0]['id'])
+        parts = rel.split('/') if rel else []
+        wname = '/'.join(parts[:depth]) if (parts and depth > 0) else idx['roots'][ri]['name']
+        st = target.stat()
+        with self.lock:
+            di = next((k for k, (d, r) in enumerate(zip(idx['dirs'], idx['dirRoot'])) if d == rel and r == ri), None)
+            if di is None:
+                di = len(idx['dirs']); idx['dirs'].append(rel); idx['dirRoot'].append(ri)
+            wi = next((k for k, w in enumerate(idx['works']) if w['n'].lower() == wname.lower()), None)
+            if wi is None:
+                wi = len(idx['works']); idx['works'].append({'n': wname})
+            i = len(idx['n'])
+            idx['d'].append(di); idx['n'].append(target.name); idx['k'].append(KINDS.index(kind)); idx['s'].append(sids.get(sec, 0))
+            idx['w'].append(wi); idx['t'].append(int(st.st_mtime)); idx['z'].append(int(st.st_size // 1024))
+            if kind in ('note', 'skill') and st.st_size < 4_000_000:
+                ex = parse_md(str(target), stem)
+                if ex:
+                    idx['x'][str(i)] = ex
+            self._dirty = True
+        return i
+
+    def import_done(self):
+        # re-pack the index once after a batch of new files, so the page can load it and the next start keeps it
+        with self.lock:
+            if not getattr(self, '_dirty', False):
+                return {'ok': True, 'items': len(self.index['n'])}
+            idx = self.index
+            idx['at'] = now()
+            raw = gzip.compress(json.dumps(idx, ensure_ascii=False, separators=(',', ':')).encode('utf-8'), 6)
+            self.index_gz, self._dirty, self._kmap_at = raw, False, None
+        (STATE / 'index.json.gz').write_bytes(raw)
+        return {'ok': True, 'items': len(idx['n'])}
+
+    # links between files: written into each file's sidecar note, kept in .s8/links.json ---------
+    def links_list(self):
+        f, km = STATE / 'links.json', self.key_map()
+        if not f.exists():
+            return []
+        try:
+            pairs = json.loads(f.read_text(encoding='utf-8'))
+        except Exception:
+            return []
+        return [[km[a], km[b]] for a, b in pairs if a in km and b in km]
+
+    def links_add(self, items, remove=False):
+        items = [int(i) for i in items if isinstance(i, int) or str(i).isdigit()][:200]
+        items = [i for i in dict.fromkeys(items) if self.item_path(i) is not None]
+        if len(items) < 2:
+            return {'ok': False, 'error': 'Pick two files or more'}
+        hub = len(items) > 24
+        pairs = [(items[0], j) for j in items[1:]] if hub else [(a, b) for k, a in enumerate(items) for b in items[k + 1:]]
+        f = STATE / 'links.json'
+        try:
+            have = json.loads(f.read_text(encoding='utf-8')) if f.exists() else []
+        except Exception:
+            have = []
+        keyset = {tuple(sorted(p)) for p in have}
+        for a, b in pairs:
+            kp = tuple(sorted((self.item_key(a), self.item_key(b))))
+            (keyset.discard if remove else keyset.add)(kp)
+        STATE.mkdir(exist_ok=True)
+        f.write_text(json.dumps(sorted(keyset), ensure_ascii=False), encoding='utf-8')
+        # each file's sidecar note lists what it links to, so Obsidian sees the same links
+        touched = {}
+        for a, b in pairs:
+            touched.setdefault(a, set()).add(b); touched.setdefault(b, set()).add(a)
+        for i, others in touched.items():
+            sc = self.sidecar_get(i)
+            names = []
+            for j in others:
+                pj = self.item_path(j)
+                vr = self.vault_rel(pj)
+                names.append(vr if vr else pj.name)
+            cur = sc.get('links', [])
+            new = [l for l in cur if l not in names] if remove else cur + [n for n in names if n not in cur]
+            self.sidecar_put(i, {'visibility': sc.get('visibility', 'private'), 'tags': sc.get('tags', []), 'links': new, 'body': sc.get('body', '')})
+        return {'ok': True, 'pairs': len(pairs), 'hub': hub}
+
     # patches and collections ----------------------------------------------
     def patch_list(self):
         d = STATE / 'patches'
@@ -1006,14 +1277,176 @@ class Bridge:
         pid = re.sub(r'[^A-Za-z0-9_\-]', '', str(patch.get('id', '')))[:40]
         if not pid:
             return {'ok': False, 'error': 'Patch has no id'}
-        keep_keys = ('id', 'type', 'x', 'y', 'i', 'key', 'tool', 'task', 'label', 'title', 'accepted')
+        keep_keys = ('id', 'type', 'x', 'y', 'i', 'key', 'tool', 'task', 'label', 'title', 'accepted', 'src', 'ccs', 'vals',
+                     'items', 'gid', 'text', 'engine', 'fps', 'target', 'layer', 'column', 'bin', 'sequence')
         clean = {'id': pid, 'name': str(patch.get('name', pid))[:120],
                  'nodes': [{k: n[k] for k in keep_keys if k in n} for n in patch.get('nodes', [])][:500],
-                 'wires': [{k: w[k] for k in ('a', 'ap', 'b', 'bp') if k in w} for w in patch.get('wires', [])][:2000]}
+                 'wires': [{k: w[k] for k in ('a', 'ap', 'b', 'bp') if k in w} for w in patch.get('wires', [])][:2000],
+                 'links': [{k: m[k] for k in LINK_KEYS if k in m} for m in patch.get('links', []) if isinstance(m, dict)][:2000],
+                 'from': str(patch.get('from', ''))[:40]}
         d = STATE / 'patches'
         d.mkdir(parents=True, exist_ok=True)
         (d / f'{pid}.json').write_text(json.dumps(clean, ensure_ascii=False, indent=1), encoding='utf-8')
         return {'ok': True}
+
+    # ── jobs (1.6): what a patch node hands to the outside — an AI, ffmpeg, Blender, Resolume, Resolve
+    def job(self, body):
+        kind = str(body.get('kind', ''))
+        if kind not in ('ai', 'seq', 'import3d', 'send'):
+            return {'ok': False, 'error': 'Unknown kind of job'}
+
+        def paths(vals, cap=2000):
+            out = []
+            for v in (vals or [])[:cap]:
+                try:
+                    p = self.item_path(int(v))
+                except (TypeError, ValueError):
+                    p = None
+                if p is not None and p.exists():
+                    out.append(p)
+            return out
+        files = paths(body.get('items'))
+        text = str(body.get('text') or '')[:40000]
+        for p in paths(body.get('textItems'), 20):          # notes wired in as prompt text
+            if p.suffix.lower() in ('.md', '.txt'):
+                try:
+                    text = (text + '\n\n' if text else '') + p.read_text(encoding='utf-8', errors='replace')[:20000]
+                except OSError:
+                    pass
+        slots = {}
+        for k, v in (body.get('slots') or {}).items():
+            if k in MAT_SLOTS:
+                pp = paths([v])
+                if pp:
+                    slots[k] = str(pp[0])
+        name = re.sub(r'\s+', ' ', str(body.get('name') or kind))[:80]
+        jid = time.strftime('%Y%m%d-%H%M%S') + '-' + kind + '-' + secrets.token_hex(2)
+        d = STATE / 'jobs' / jid
+        (d / 'out').mkdir(parents=True, exist_ok=True)
+        nat = lambda p: [int(t) if t.isdigit() else t.lower() for t in re.split(r'(\d+)', p.name)]
+        if kind in ('seq', 'send') or body.get('sequence'):
+            files.sort(key=nat)
+        man = {'id': jid, 'kind': kind, 'name': name, 'prompt': text, 'files': [str(p) for p in files], 'slots': slots,
+               'out': str(d / 'out'), 'sequence': bool(body.get('sequence')), 'bin': str(body.get('bin') or '')[:80]}
+        models = [p for p in files if p.suffix.lower().lstrip('.') in MODEL_EXTS]
+        if kind == 'import3d':
+            man['model'] = str(models[0]) if models else ''
+        (d / 'prompt.txt').write_text(text, encoding='utf-8')
+        (d / 'files.txt').write_text('\n'.join(man['files']), encoding='utf-8')
+        refs = d / 'refs'                                    # the references in one folder, as links: nothing is copied
+        if kind == 'ai' and files:
+            refs.mkdir(exist_ok=True)
+            for n, p in enumerate(files[:200]):
+                try:
+                    os.symlink(p, refs / f'{n + 1:03d}_{p.name}')
+                except OSError:
+                    break
+        (d / 'job.json').write_text(json.dumps(man, ensure_ascii=False, indent=1), encoding='utf-8')
+        br = self.cfg.get('bridges') or {}
+        res = {'ok': True, 'job': jid, 'dir': str(d), 'files': len(files)}
+
+        def start(cmd, label):
+            for tid in [k for k, t in self.tasks.items() if t.spec.get('job') and t.state != 'running'][:-8]:
+                self.tasks.pop(tid, None)
+            t = Task({'id': jid, 'name': label, 'cmd': cmd, 'job': True, 'work': str(body.get('work') or '')}, self)
+            self.tasks[jid] = t
+            t.run([])
+            res.update(did='task', task=jid)
+            return res
+
+        def fill(cmd):
+            out = []
+            for c in cmd:
+                c = str(c)
+                if c == '{files}':
+                    out.extend(man['files'])
+                    continue
+                for k, v in (('{job}', str(d / 'job.json')), ('{dir}', str(d)), ('{prompt}', text), ('{prompt_file}', str(d / 'prompt.txt')),
+                             ('{files_file}', str(d / 'files.txt')), ('{refs}', str(refs)), ('{out}', str(d / 'out')), ('{here}', str(HERE))):
+                    c = c.replace(k, v)
+                out.append(c)
+            return out
+
+        if kind == 'ai':
+            eng = next((e for e in self.cfg.get('engines', []) if e.get('id') == body.get('engine')), None)
+            if not eng:
+                return {'ok': False, 'error': 'No such AI engine in config.json → engines'}
+            if not text and not files:
+                return {'ok': False, 'error': 'Wire a prompt or references into the AI node first'}
+            if eng.get('cmd'):
+                return start(fill(eng['cmd']), eng.get('name', 'AI') + ' · ' + name)
+            if files:
+                reveal(refs if refs.exists() and any(refs.iterdir()) else d / 'files.txt')
+            res.update(did='handoff', url=eng.get('url', ''), prompt=text, engine=eng.get('name', eng['id']))
+            return res
+        if kind == 'seq':
+            stills = [p for p in files if p.suffix.lower() in ('.png', '.jpg', '.jpeg', '.webp', '.tif', '.tiff', '.bmp', '.exr')]
+            if len(stills) < 2:
+                return {'ok': False, 'error': 'A sequence needs at least two images'}
+            ff = shutil.which(str(br.get('ffmpeg') or 'ffmpeg')) or (str(expand(br['ffmpeg'])) if br.get('ffmpeg') else None)
+            if not ff:
+                return {'ok': False, 'error': 'ffmpeg not found — install it, or set bridges.ffmpeg in config.json'}
+            fps = max(1.0, min(120.0, float(body.get('fps') or 25)))
+            esc = lambda p: str(p).replace("'", "'\\''")
+            (d / 'frames.txt').write_text(''.join(f"file '{esc(p)}'\nduration {1 / fps:.6f}\n" for p in stills) + f"file '{esc(stills[-1])}'\n", encoding='utf-8')
+            stem = re.sub(r'[\s_.\-]*\d+$', '', stills[0].stem) or stills[0].stem
+            out = stills[0].parent / f'{stem}_seq.mp4'
+            n = 2
+            while out.exists():
+                out = stills[0].parent / f'{stem}_seq ({n}).mp4'
+                n += 1
+            if not os.access(out.parent, os.W_OK):
+                out = d / 'out' / out.name
+            res['out'] = str(out)
+            return start([ff, '-y', '-hide_banner', '-loglevel', 'error', '-stats', '-f', 'concat', '-safe', '0', '-i', str(d / 'frames.txt'),
+                          '-vf', f'fps={fps:g},scale=trunc(iw/2)*2:trunc(ih/2)*2,format=yuv420p', '-c:v', 'libx264', '-crf', '16', '-movflags', '+faststart', str(out)],
+                         f'PNG sequence · {len(stills)} frames → {out.name}')
+        if kind == 'import3d':
+            if not man['model'] and not slots:
+                return {'ok': False, 'error': 'Wire a 3D file or a material group into the import node first'}
+            exe = (br.get('blender') or {}).get(OS_KEY) or ('/Applications/Blender.app/Contents/MacOS/Blender' if SYSTEM == 'Darwin' else ((self.tools.get('blender') or {}).get('open') or {}).get(OS_KEY) or 'blender')
+            exe = shutil.which(exe) or str(expand(exe))
+            if not Path(exe).exists():
+                return {'ok': False, 'error': 'Blender not found — set bridges.blender in config.json to the Blender program itself'}
+            return start([exe, '--python', str(HERE / 'bridges' / 'blender_import.py'), '--', str(d / 'job.json')], 'Blender · ' + (Path(man['model']).name if man['model'] else 'material'))
+        target = str(body.get('target') or '')
+        if not files:
+            return {'ok': False, 'error': 'Wire video or images into the node first'}
+        if target == 'resolume':
+            base = str((br.get('resolume') or {}).get('url') or 'http://127.0.0.1:8080').rstrip('/')
+            layer, col = max(1, int(body.get('layer') or 1)), max(1, int(body.get('column') or 1))
+            import urllib.request
+            import urllib.error
+            done = 0
+            for n, p in enumerate(files[:64]):
+                err = None
+                for verb in ('open', 'openfile'):
+                    rq = urllib.request.Request(f'{base}/api/v1/composition/layers/{layer}/clips/{col + n}/{verb}', data=p.as_uri().encode(), method='POST', headers={'Content-Type': 'text/plain'})
+                    try:
+                        urllib.request.urlopen(rq, timeout=4).read()
+                        err = None
+                        break
+                    except urllib.error.HTTPError as ex:
+                        err = f'Resolume answered {ex.code} for layer {layer}, clip {col + n}'
+                    except OSError as ex:
+                        return {'ok': False, 'error': f'Resolume does not answer at {base} — turn on Preferences › Webserver in Arena or Avenue ({ex.__class__.__name__})'}
+                if err:
+                    return {'ok': False, 'error': err + (f' · {done} loaded before it' if done else '')}
+                done += 1
+            res.update(did='resolume', loaded=done, layer=layer, column=col)
+            return res
+        if target == 'resolve':
+            py = str((br.get('resolve') or {}).get('python') or sys.executable)
+            return start([py, str(HERE / 'bridges' / 'resolve_import.py'), str(d / 'job.json')], f'Resolve · {len(files)} files → media pool')
+        spec = self.tools.get(target) or {}
+        app = (spec.get('open') or {}).get(OS_KEY) or spec.get('app')
+        if not app:
+            return {'ok': False, 'error': f'No program set for “{target}” in config.json → tools'}
+        open_with(app, files[0])
+        if len(files) > 1:
+            reveal(files[0])
+        res.update(did='opened', target=spec.get('name', target))
+        return res
 
     def collect(self, title, items, body=''):
         title = re.sub(r'\s+', ' ', re.sub(r'[\\/:*?"<>|#\[\]^]', ' ', str(title))).strip()[:100] or 'Collection'
@@ -1062,6 +1495,68 @@ class Handler(BaseHTTPRequestHandler):
     def host_ok(self):
         h = (self.headers.get('Host') or '').rsplit(':', 1)[0].strip('[]').lower()
         return h in self.server.allowed_hosts
+
+    def ws_origin_ok(self):
+        # who may join the link hub: the bridge's own pages, pages served from this computer, and allowOrigins.
+        # No file access goes over this socket, so it needs no token — the origin check keeps other websites out.
+        o = (self.headers.get('Origin') or '').rstrip('/')
+        if not o:
+            return self.local_client()
+        if o in self.B.cfg.get('allowOrigins', []):
+            return True
+        host = urlparse(o).hostname or ''
+        return host in ('localhost', '127.0.0.1', '::1') or host in self.server.allowed_hosts
+
+    def websocket(self):
+        key = self.headers.get('Sec-WebSocket-Key')
+        if not key or 'websocket' not in (self.headers.get('Upgrade') or '').lower():
+            return self.fail(400, 'This address is the link hub: connect with a WebSocket')
+        if not self.ws_origin_ok():
+            return self.fail(403, 'Origin not allowed — add it to allowOrigins in config.json')
+        self.send_response(101)
+        self.send_header('Upgrade', 'websocket'); self.send_header('Connection', 'Upgrade')
+        self.send_header('Sec-WebSocket-Accept', ws_accept(key))
+        self.end_headers(); self.wfile.flush()
+        self.close_connection = True
+        wl = threading.Lock()
+
+        def send(text, op=1):
+            data = text.encode('utf-8') if isinstance(text, str) else text
+            n = len(data)
+            head = bytes([0x80 | op]) + (bytes([n]) if n < 126 else bytes([126]) + n.to_bytes(2, 'big') if n < 65536 else bytes([127]) + n.to_bytes(8, 'big'))
+            with wl:
+                self.wfile.write(head + data); self.wfile.flush()
+        cid = secrets.token_hex(6)
+        HUB.add(cid, send)
+        try:
+            buf = b''
+            while True:
+                h = self.rfile.read(2)
+                if len(h) < 2:
+                    break
+                fin, op, masked, n = h[0] & 0x80, h[0] & 0x0f, h[1] & 0x80, h[1] & 0x7f
+                if n == 126:
+                    n = int.from_bytes(self.rfile.read(2), 'big')
+                elif n == 127:
+                    n = int.from_bytes(self.rfile.read(8), 'big')
+                if n > 1 << 20:
+                    break
+                mask = self.rfile.read(4) if masked else b'\0\0\0\0'
+                data = bytearray(self.rfile.read(n))
+                for k in range(len(data)):
+                    data[k] ^= mask[k & 3]
+                if op == 8:
+                    break
+                if op == 9:
+                    send(bytes(data), 10); continue
+                if op in (1, 0):
+                    buf += bytes(data)
+                    if fin:
+                        HUB.handle(cid, buf.decode('utf-8', 'replace')); buf = b''
+        except (OSError, ValueError):
+            pass
+        finally:
+            HUB.drop(cid)
 
     def token_ok(self, q):
         t = self.headers.get('X-S8-Token') or (q.get('k') or [''])[0]
@@ -1183,8 +1678,10 @@ class Handler(BaseHTTPRequestHandler):
                     target = target / 'index.html'
                 return self.send_file(target, cache=False)
             return self.fail(404, 'Not found')
+        if path == '/ws':
+            return self.websocket()
         static = WEB / path.lstrip('/')
-        if path.count('/') == 1 and static.suffix in ('.js', '.css', '.svg', '.png', '.woff2') and static.exists():
+        if path.count('/') == 1 and static.suffix in ('.js', '.css', '.svg', '.png', '.woff2', '.html') and static.exists():
             return self.send_file(static, cache=False)
         if not self.token_ok(q):
             return self.fail(401, 'Missing or wrong token — reload the control room from the bridge address')
@@ -1195,6 +1692,8 @@ class Handler(BaseHTTPRequestHandler):
                 'ok': True, 'version': VERSION, 'os': OS_KEY, 'machine': B.cfg.get('machine') or socket.gethostname(),
                 'progress': B.progress, 'indexAt': idx['at'] if idx else 0, 'items': len(idx['n']) if idx else 0,
                 'tools': B.public_tools(), 'tasks': [t.json() for t in B.tasks.values()],
+                'engines': [{'id': e.get('id'), 'name': e.get('name', e.get('id')), 'where': e.get('where', ''), 'url': e.get('url', ''), 'auto': bool(e.get('cmd')), 'gives': e.get('gives', 'image')} for e in B.cfg.get('engines', []) if e.get('id')],
+                'ffmpeg': bool(shutil.which(str((B.cfg.get('bridges') or {}).get('ffmpeg') or 'ffmpeg'))),
                 'caps': B.caps, 'vault': B.vault_name, 'sidecars': str(B.sidecar_dir),
                 'config': str(B.cfg_path), 'roots': [{'path': str(expand(r['path'])), 'sector': r.get('sector', 'auto'),
                                                      'ok': expand(r['path']).is_dir()} for r in B.cfg['roots']]})
@@ -1217,6 +1716,10 @@ class Handler(BaseHTTPRequestHandler):
             return self.send_json({'ok': True, 'patches': B.patch_list()})
         if path == '/api/groups':
             return self.send_json({'ok': True, 'groups': B.group_list()})
+        if path == '/api/link/status':
+            return self.send_json({'ok': True, **HUB.status()})
+        if path == '/api/links':
+            return self.send_json({'ok': True, 'links': B.links_list()})
         if path == '/api/deadlines':
             return self.send_json({'ok': True, 'deadlines': B.deadlines()})
         if path == '/api/tasks':
@@ -1279,12 +1782,19 @@ class Handler(BaseHTTPRequestHandler):
             return self.fail(403, 'Host not allowed')
         if not self.token_ok(q):
             return self.fail(401, 'Missing or wrong token')
+        B, path = self.B, u.path
+        if path == '/api/import':
+            # one file per request, raw bytes; where it goes is in the query
+            n = int(self.headers.get('Content-Length') or 0)
+            try:
+                return self.send_json(B.import_file(q.get('root', [''])[0], q.get('rel', [''])[0], q.get('name', [''])[0], self.rfile, n))
+            except Exception as ex:  # noqa
+                return self.fail(500, str(ex))
         try:
             n = int(self.headers.get('Content-Length') or 0)
             body = json.loads(self.rfile.read(min(n, 4_000_000)) or b'{}') if n else {}
         except ValueError:
             return self.fail(400, 'Body must be JSON')
-        B, path = self.B, u.path
         try:
             if path == '/api/open':
                 i = self.item_arg(q, body)
@@ -1315,12 +1825,18 @@ class Handler(BaseHTTPRequestHandler):
                     if p is not None:
                         paths.append(p)
                 return self.send_json({'ok': t.run(paths), 'task': t.json()})
+            if path == '/api/job':
+                return self.send_json(B.job(body))
             if path == '/api/patch':
                 return self.send_json(B.patch_save(body.get('patch') or {}))
             if path == '/api/collect':
                 return self.send_json(B.collect(body.get('title', ''), body.get('items') or [], body.get('body', '')))
             if path == '/api/group':
                 return self.send_json(B.group_save(body))
+            if path == '/api/import/done':
+                return self.send_json(B.import_done())
+            if path == '/api/link':
+                return self.send_json(B.links_add(body.get('items') or [], bool(body.get('remove'))))
             if path == '/api/group/delete':
                 return self.send_json(B.group_delete(body.get('id', '')))
             if path == '/api/deadline':

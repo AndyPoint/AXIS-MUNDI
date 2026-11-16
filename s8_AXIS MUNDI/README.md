@@ -1,6 +1,6 @@
-# SYSTEM 8 · Control room — build 1.3
+# SYSTEM 8 · Control room — build 1.6
 
-The working control room from design plan v0.1: one index of your archive, rings that zoom fractally from everything down to single files, lenses that split the circle into up to four independently zoomable slices, virtual groups, a graph on the same rings with bundled links, a patch room for wiring material into tools, search, the year grid with deadlines, links straight into your tools, tasks and agents that can ask for you, and sidecar notes.
+The working control room from design plan v0.1: one index of your archive, rings that zoom fractally from everything down to single files, lenses that split the circle into up to four independently zoomable slices, virtual groups, a graph on the same rings with bundled links, a patch room for wiring material into tools and live links that let tools drive each other, search, the year grid with deadlines, links straight into your tools, tasks and agents that can ask for you, and sidecar notes.
 
 It is two parts:
 
@@ -10,6 +10,105 @@ It is two parts:
 | `web/` | **The control room.** Plain HTML/CSS/JS, no build step. Open the folder in Cursor and edit directly. |
 
 Without the bridge, `web/index.html` runs on a built-in sample archive (717,440 invented items) so the interface can be shown anywhere.
+
+---
+
+## New in 1.6 — sets, prompts, AI, sequences, 3D materials, bridges
+
+A file wire now carries a **package**: many files, text, and (for 3D) one material made of named maps. New nodes, under *Flow* in the patch library:
+
+| Node | Takes | Gives | What Run does |
+|---|---|---|---|
+| **File set** | — | many files | Holds up to 500 files: press *Use picked* after shift-clicking files anywhere, or choose a virtual folder (the set then follows it). |
+| **Prompt · text** | — | text | The text you type. A note from the archive can be wired into the same input. |
+| **AI engine** (one row per entry in `engines`) | prompt · references · video | image, video or text | With a `cmd`: runs it. Without: copies the prompt, shows the references in one folder (links, nothing copied) and opens the engine's address. |
+| **PNG sequence → video** | frames | video | ffmpeg makes one MP4 from the stills in name order, saved beside the first frame. |
+| **Material group** | texture · bump · light · reflection · normal · displacement · transparency | material | Collects the maps; each input takes one image. |
+| **3D import · Blender** | object · material | 3D | Starts Blender with `bridges/blender_import.py`: imports the file, builds one Principled material from the group. |
+| **Send to · Resolume Arena / Avenue** | video · image | — | Each file into the next clip of a layer, through Resolume's web server (Preferences › Webserver, port 8080). |
+| **Send to · DaVinci Resolve** | video · image | — | Into the media pool of the open project, optionally numbered stills as one clip (`bridges/resolve_import.py`; needs Resolve Studio with external scripting set to Local). |
+| **Send to · Resolume Wire** | video · image | — | Opens Wire with the first file and shows the rest. Wire has no way to be handed files from outside. |
+
+Templates: *Prompt + references → AI*, *PNG sequence → video → Resolume*, *3D object + material group → Blender*. Lessons: *Feed an AI*, *3D object with a material group*.
+
+**config.json** — two new blocks (see `config.example.json`):
+
+```json
+"engines": [
+  { "id": "comfy", "name": "ComfyUI · local", "where": "local", "gives": "image", "url": "http://127.0.0.1:8188/", "cmd": [] },
+  { "id": "midjourney", "name": "Midjourney", "where": "cloud", "gives": "image", "url": "https://www.midjourney.com/imagine" }
+],
+"bridges": { "ffmpeg": "ffmpeg", "blender": { "mac": "/Applications/Blender.app/Contents/MacOS/Blender" }, "resolume": { "url": "http://127.0.0.1:8080" } }
+```
+
+An engine's `cmd` is any program of yours; it is handed the job through placeholders: `{job}` (a JSON file with prompt, files, slots, out folder), `{prompt}`, `{prompt_file}`, `{files}` (one argument per file), `{files_file}`, `{refs}` (folder of links), `{out}`, `{python}`. Its output is the log under *Run*; a line starting `S8:` asks for you. Every job leaves a folder in `.s8/jobs/`.
+
+The pick bar (naming a virtual folder) now uses the interface's own surface: pale panel, dark action, red-orange only on the count.
+
+Not tested against the real programs: Blender, Resolume and Resolve were not available where this was built. ffmpeg, the job folders, engine commands and the Resolume calls (against a stand-in server) were.
+
+---
+
+## New in 1.5 — live links between tools
+
+The patch room now has **two kinds of connection**, and they never mix:
+
+| | Material wire | Live link |
+|---|---|---|
+| Carries | files | one number, 0–1 |
+| When | once, when you press **Run** | every frame, while the control room is open |
+| Drawn | between file ports (coloured by kind) | between the small bars on node rows |
+
+It speaks the same link language as the SYSTEM 8 Builder: a **signal** is a number 0–1; a **parameter** owns its min, max and default; the **link** owns the mapping — in range, out range, curve (linear, ease, exp, log), smoothing, quantize, invert. When a source goes quiet (controller unplugged, tool closed) the tool keeps its own value.
+
+* **Sources** (library → *Live · signals and tools*): *Time · pointer* (sine, triangle, beat, bar, pointer x/y), *Sliders · 8*, *MIDI · controller* (Connect, then Learn and move a knob), and every parameter or signal of a joined tool.
+* **Targets:** parameters of a joined tool. Drag from a row's right bar to another row's left bar. Select the link to shape it in the right panel, with meters for the signal before and after mapping. Delete removes it.
+* **Templates** (library → *Templates · start from one*): *Pad plays the ring*, *Slow drift · the clock plays*, *Desk · eight sliders*, *MIDI knobs · CC 1–4* (live links); *Image → SC3NE → CUTOUT*, *Moodboard → note*, *Photo → THRESHOLD → MIRROR* (file wires). Each opens as a new patch; the template stays as it is.
+* **Help** (top of the left panel, switched by the *Help on / off* pill): a card that says what is in front of you — the view, the picked files, the selected node or link — and short lessons you step through (*Make a virtual folder*, *Bring files in and link them*, *Wire files into a tool*, *Link tools live*, *Shape a link*, *Play with a MIDI controller*, *Make your own tool join*, *Lenses*, *Triangles*). The lesson that fits the moment is marked *for this*; some steps can do the action for you or point at the part of the screen they mean.
+* **Try it:** open the patch *Live · the pad plays the ring* — the pad drives the ring's radius, twist and weight, time drives its petals, slider 1 its spin.
+* **Link check** (right panel with nothing selected, or with a live node selected): is the hub on, the clock, MIDI, and one row per SYSTEM 8 tool — *joined · follows the contract*, *joined · n problems* (each problem listed), or *does not load s8link.js yet*. **Probe** opens the tool with the hub address and waits eight seconds for it to say hello. This is the test of whether a tool is ready.
+
+### How a tool joins (once)
+
+Copy `web/s8link.js` next to the tool, or load it from the bridge, and declare a table of named numbers:
+
+```html
+<script src="http://127.0.0.1:8808/s8link.js"></script>
+<script>
+S8Link.join({
+  tool: 'keha', name: 'KEHÄ',                      // the tool id from config.json
+  params: {                                        // scalars only — a colour is three parameters
+    radius: { get: () => r, set: v => r = v, min: 0, max: 400, default: 120 },
+    petals: { get: () => n, set: v => n = Math.round(v), min: 3, max: 64, default: 12 },
+  },
+  signals: { pressure: () => pen.pressure },       // optional: what it gives out, 0–1
+  actions: { reset: () => reset() },               // optional: things that can be triggered
+});
+</script>
+```
+
+* With no bridge the tool runs exactly as before (LOCAL first). With the bridge it shows up as joined, and every parameter is also a source.
+* Setters are called at most once per frame, already clamped to min–max.
+* Where the hub is: found by itself when the tool is served by the bridge (`toolsDir` → `http://127.0.0.1:8808/tools/…`) or when it loads `s8link.js` from the bridge; otherwise add `?s8=ws://127.0.0.1:8808/ws` to the tool's address. *Probe* does that for you.
+* A working example: `http://127.0.0.1:8808/link-example.html`.
+
+### The hub
+
+The bridge is the hub: `ws://127.0.0.1:8808/ws`. It checks each tool's table when the tool says hello (min below max, default inside the range, numbers only), relays signals and values, and holds the clock (`clock.beat`, `clock.bar`, BPM set in the Link check). It does not evaluate links — the control room does, so links run while the control room is open in any view. The socket needs no token because it never touches files; pages from other computers or websites are refused unless listed in `allowOrigins`. Timing and pixel-derived values are never sent over it.
+
+**The SYSTEM 8 Builder** already has a NET backend that listens for exactly these messages. Point it at `ws://127.0.0.1:8808/ws`: serve the Builder from `toolsDir` (then it is the same origin), or, if you open it as a file, add `"null"` to `allowOrigins`. It then sees every joined tool's signals as NETWORK sources. It does not yet publish its own signals or join with a table — that is the one change the Builder needs.
+
+---
+
+## New in 1.4 — pick, name, link, bring in
+
+* **Pick several files:** shift-click (or ⌘/Ctrl-click) files on the rings, in the list (`L`) or in the Field. Picked files get a small red-orange square. *Pick all here* in the right panel picks everything in the focus (up to 5,000). Esc clears.
+* **Name them as a virtual folder:** a bar appears at the bottom while files are picked. Type a name, press *Make virtual folder* — it opens as a lens and is listed under *Virtual folders* in the left panel. The same bar can *Add to…* an existing virtual folder, *Remove from* the one you are in, *Link them* or *Unlink*.
+* **Rename** a virtual folder in the left panel (*Rename*). Its note in the vault is renamed with it.
+* **Link files:** *Link them* links every picked file to every other (more than 24: each to the first one picked). Links show in the Graph at once and when a file is selected on the rings. With the bridge they are written into each file's sidecar note (`links:`), so Obsidian sees them too, and kept in `.s8/links.json`.
+* **Bring files in:** drag files from Finder or Explorer onto the page, or press *Bring files…* in the right panel. They are **copied** into the folder you are zoomed into — or, when the focus spans several folders, into `Inbox` in your first folder. Nothing is overwritten (a second `board.png` becomes `board (2).png`). The new files appear at once, already picked, so you can name them as a virtual folder straight away; if a virtual folder is open as a lens, they are added to it.
+
+A virtual folder never moves or copies files. Only *Bring files* writes files to disk, and only new ones.
 
 ---
 
@@ -210,9 +309,19 @@ Left panel `[` = what exists (archive, sources, kinds, groups, sectors, settings
 * `.s8/index.json.gz` — the index; `.s8/cache.json.gz` — parsed notes and prompts; `.s8/thumbs/` — thumbnails. Delete `.s8` any time; it is rebuilt.
 * Sidecar notes: `<vault>/_s8/<sector>/<file name> · <id>.md` — plain Markdown with frontmatter (`s8: sidecar`, `source`, `visibility`, `tags`, `links`).
 * Collection notes from the patch room: `<vault>/_s8/collections/<title>.md`. Patches: `.s8/patches/<id>.json`.
-* Groups: `.s8/groups/<id>.json` (what the app reads) and `<vault>/_s8/groups/<name>.md` (a readable note). Project deadlines set in the app: `<vault>/_s8/projects/<project>.md`.
+* Links you make: `.s8/links.json` and the `links:` of each file's sidecar note.
+* Files you bring in: the folder you were zoomed into, or `<first folder>/Inbox`.
+* Groups (virtual folders): `.s8/groups/<id>.json` (what the app reads) and `<vault>/_s8/groups/<name>.md` (a readable note). Project deadlines set in the app: `<vault>/_s8/projects/<project>.md`.
 * New folders are made only inside the folders listed in `roots`.
 * The bridge only listens on this computer unless you set `host`. Every request needs the token the bridge puts into the page; other websites cannot read your files.
+
+## Updating from 1.5
+
+Replace `s8.py` and the `web/` folder, add the `bridges/` folder, and copy the `engines` and `bridges` blocks from `config.example.json` into your `config.json`.
+
+## Updating from 1.4
+
+Replace `s8.py` and the `web/` folder; keep `config.json` and `.s8/`. Nothing is reindexed.
 
 ## Updating from 1.2
 
@@ -220,6 +329,7 @@ Replace `s8.py` and the `web/` folder; keep your `config.json` and `.s8/`. On th
 
 ## Not yet (next phases of the plan)
 
+* Live links when the control room is closed (today the control room evaluates them; the hub only relays).
 * Answering a waiting agent from the control room (today the agent must watch for your answer itself).
 * Tools that hand their result back to the patch automatically (needs each SYSTEM 8 tool to save into the project folder or post back to the bridge).
 * One bridge per machine joined in one view (Mac + PC).
